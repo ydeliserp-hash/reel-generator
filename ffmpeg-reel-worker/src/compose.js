@@ -38,9 +38,10 @@ const SIG_BAR_Y = pctY(BRAND.positions.signature_bar_y_pct) - Math.floor(BRAND.s
  * Ejecuta ffmpeg con los args dados. Resuelve con stderr al exit 0,
  * rechaza con tail de stderr al exit != 0.
  */
-function runFfmpeg(args, logger) {
+function runFfmpeg(args, logger, label = 'ffmpeg') {
   return new Promise((resolve, reject) => {
-    logger?.debug?.({ args }, 'spawning ffmpeg');
+    const t0 = Date.now();
+    logger?.info?.({ label }, 'spawning ffmpeg');
     const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     proc.stderr.on('data', (chunk) => {
@@ -48,14 +49,35 @@ function runFfmpeg(args, logger) {
     });
     proc.on('error', reject);
     proc.on('close', (code) => {
+      const elapsedMs = Date.now() - t0;
       if (code === 0) {
+        logger?.info?.({ label, elapsedMs }, 'ffmpeg done');
         resolve({ stderr });
       } else {
         const tail = stderr.split('\n').slice(-40).join('\n');
+        logger?.error?.({ label, code, elapsedMs }, 'ffmpeg failed');
         reject(new Error(`ffmpeg exited with code ${code}\n${tail}`));
       }
     });
   });
+}
+
+/**
+ * Ejecuta `tasks` en lotes de `concurrency`, no todos en paralelo.
+ * Devuelve un array con los resultados en el mismo orden.
+ */
+async function runWithConcurrency(tasks, concurrency = 2) {
+  const results = new Array(tasks.length);
+  let cursor = 0;
+  async function worker() {
+    while (true) {
+      const i = cursor++;
+      if (i >= tasks.length) return;
+      results[i] = await tasks[i]();
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, tasks.length) }, worker));
+  return results;
 }
 
 /**
@@ -115,27 +137,26 @@ async function buildImageSegment(
   const W = BRAND.video.width;
   const H = BRAND.video.height;
 
-  // Pre-escalado con margen 1.5x para que zoompan tenga resolucion sobrante.
-  const preW = Math.round(W * 1.5);          // 1620
-  const preH = Math.round(ASSET_AREA_HEIGHT * 1.5); // 2016
-
+  // Modo simple sin zoompan (optimizado para velocidad).
+  // TODO fase 2: re-habilitar zoompan cuando el VPS tenga mas CPU.
   const filter = [
-    `scale=${preW}:${preH}:force_original_aspect_ratio=increase`,
-    `crop=${preW}:${preH}`,
-    `zoompan=z='${kb.z}':x='${kb.x}':y='${kb.y}':d=${frames}:fps=${fps}:s=${W}x${ASSET_AREA_HEIGHT}`,
+    `scale=${W}:${ASSET_AREA_HEIGHT}:force_original_aspect_ratio=decrease`,
+    `pad=${W}:${ASSET_AREA_HEIGHT}:(${W}-iw)/2:(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
     `pad=${W}:${H}:0:${ASSET_TOP_Y}:color=${padColor}`,
+    `fps=${fps}`,
     'format=yuv420p',
   ].join(',');
 
   const args = [
     '-y',
+    '-loop', '1',
     '-i', assetPath,
     '-vf', filter,
-    '-frames:v', frames.toString(),
+    '-t', duration.toString(),
     '-r', fps.toString(),
     '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '20',
+    '-preset', 'ultrafast',
+    '-crf', '23',
     '-an',
     outputPath,
   ];
@@ -173,8 +194,8 @@ async function buildVideoSegment(
     '-vf', filter,
     '-r', fps.toString(),
     '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '20',
+    '-preset', 'ultrafast',
+    '-crf', '23',
     '-an',
     outputPath,
   ];
@@ -392,9 +413,12 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     'audio downloaded and probed'
   );
 
-  // Paso 1: pre-procesar segmentos en paralelo (cada ffmpeg es independiente).
-  await Promise.all(
-    spec.segments.map(async (seg, i) => {
+  // Paso 1: pre-procesar segmentos con paralelismo limitado.
+  // Saturar la CPU con N ffmpeg simultaneos en un VPS pequeno provoca
+  // timeouts y OOMs. max_parallel_segments controla el lote.
+  const maxParallel = BRAND.video.max_parallel_segments || 2;
+  logger?.info?.({ count: spec.segments.length, maxParallel }, 'starting phase 1: per-segment render');
+  const segmentTasks = spec.segments.map((seg, i) => async () => {
       const audioDur = audioDurations[i];
       const isLast = i === spec.segments.length - 1;
       const visualDur = isLast ? audioDur : audioDur + xfadeDur;
@@ -425,8 +449,9 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
         throw new Error(`Tipo de asset desconocido en segmento ${i}: ${seg.asset.type}`);
       }
       segmentPaths[i] = segOut;
-    })
-  );
+    });
+  await runWithConcurrency(segmentTasks, maxParallel);
+  logger?.info?.({ count: spec.segments.length }, 'phase 1 done');
 
   // Paso 2: subtitulos .ass.
   const subtitlePath = path.join(sessionDir, 'subtitles.ass');

@@ -58,11 +58,14 @@ export const BRAND = {
     width: 1080,
     height: 1920,
     fps: 30,
-    crf: 20,
-    preset: 'medium',
-    audio_bitrate: '192k',
+    crf: 23,
+    preset: 'ultrafast',
+    audio_bitrate: '128k',
     xfade_duration: 0.5,
     xfade_transition: 'fade',
+    // Numero maximo de segmentos pre-procesados en paralelo en fase 1.
+    // Bajar este valor si el worker se queda sin RAM o CPU.
+    max_parallel_segments: 2,
   },
 };
 
