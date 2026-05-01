@@ -1,0 +1,467 @@
+/**
+ * Composicion FFmpeg en 3 fases (cada una escribe a disco para facilitar debug):
+ *
+ *   1) Pre-procesar cada segmento -> seg_NN.mp4 (1080x1920, 30fps, sin audio)
+ *      - Imagenes con Ken Burns variado (zoompan).
+ *      - Videos centrados sobre fondo navy con scale + pad.
+ *
+ *   2) Concatenar segmentos con xfade -> concat.mp4
+ *      visual_dur[i] = audio_dur[i] + xfade_dur     (si i < N-1)
+ *      visual_dur[N-1] = audio_dur[N-1]
+ *      offset xfade k = sum(audio_dur[0..k])
+ *      => video total = sum(audio_dur)  (sincroniza con el audio)
+ *
+ *   3) Aplicar audio + subtitulos ASS + barra firma + (opcional) badge titulo
+ *      -> output.mp4 (H.264 CRF 20, AAC 192k, faststart).
+ */
+
+import { spawn } from 'node:child_process';
+import { copyFile } from 'node:fs/promises';
+import path from 'node:path';
+import {
+  BRAND,
+  ffmpegColor,
+  ffmpegColorAlpha,
+  pctY,
+} from './branding.js';
+import { writeSubtitleFile } from './subtitles.js';
+import { downloadToFile, extFromUrl } from './utils/download.js';
+import { probeDuration } from './utils/probe.js';
+
+// Coordenadas derivadas del branding (en px, sistema FFmpeg con origen arriba-izquierda).
+const ASSET_TOP_Y = pctY(BRAND.positions.asset_top_pct);                    // 346
+const ASSET_BOTTOM_Y = pctY(BRAND.positions.asset_bottom_pct);              // 1690
+const ASSET_AREA_HEIGHT = ASSET_BOTTOM_Y - ASSET_TOP_Y;                     // 1344
+const SIG_BAR_Y = pctY(BRAND.positions.signature_bar_y_pct) - Math.floor(BRAND.signature.bar_height / 2);
+
+/**
+ * Ejecuta ffmpeg con los args dados. Resuelve con stderr al exit 0,
+ * rechaza con tail de stderr al exit != 0.
+ */
+function runFfmpeg(args, logger) {
+  return new Promise((resolve, reject) => {
+    logger?.debug?.({ args }, 'spawning ffmpeg');
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve({ stderr });
+      } else {
+        const tail = stderr.split('\n').slice(-40).join('\n');
+        reject(new Error(`ffmpeg exited with code ${code}\n${tail}`));
+      }
+    });
+  });
+}
+
+/**
+ * Escapa una cadena para meterla DENTRO de un argumento `key='valor'`
+ * de un filtro FFmpeg (drawtext, ass, etc). Solo necesitamos escapar
+ * la propia comilla simple y el backslash.
+ */
+function escapeFilterSingleQuoted(text) {
+  return String(text)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'");
+}
+
+/**
+ * Variantes de Ken Burns: alterna por indice de segmento para evitar
+ * sensacion mecanica. El `hint` opcional del spec puede forzar una variante.
+ */
+function kenBurnsExpr(segIndex, durationFrames, hint) {
+  const denom = Math.max(durationFrames - 1, 1);
+  const variants = [
+    // 0: zoom in centrado
+    {
+      z: `min(1.15,1+0.15*on/${denom})`,
+      x: 'iw/2-(iw/zoom/2)',
+      y: 'ih/2-(ih/zoom/2)',
+    },
+    // 1: pan horizontal izq -> der con leve zoom
+    {
+      z: `min(1.10,1+0.10*on/${denom})`,
+      x: `(iw-iw/zoom)*on/${denom}`,
+      y: 'ih/2-(ih/zoom/2)',
+    },
+    // 2: zoom in con drift hacia arriba
+    {
+      z: `min(1.12,1+0.12*on/${denom})`,
+      x: 'iw/2-(iw/zoom/2)',
+      y: `(ih-ih/zoom)*(1-on/${denom})`,
+    },
+  ];
+  if (hint?.to === 'zoom_in') return variants[0];
+  if (hint?.to === 'pan_right') return variants[1];
+  if (hint?.to === 'drift_up') return variants[2];
+  return variants[segIndex % variants.length];
+}
+
+/**
+ * Fase 1: pre-procesa una imagen estatica con Ken Burns sutil.
+ */
+async function buildImageSegment(
+  { assetPath, duration, outputPath, segIndex, kenBurnsHint },
+  logger
+) {
+  const fps = BRAND.video.fps;
+  const frames = Math.max(Math.round(duration * fps), 1);
+  const kb = kenBurnsExpr(segIndex, frames, kenBurnsHint);
+  const padColor = ffmpegColor(BRAND.colors.bg_dark);
+  const W = BRAND.video.width;
+  const H = BRAND.video.height;
+
+  // Pre-escalado con margen 1.5x para que zoompan tenga resolucion sobrante.
+  const preW = Math.round(W * 1.5);          // 1620
+  const preH = Math.round(ASSET_AREA_HEIGHT * 1.5); // 2016
+
+  const filter = [
+    `scale=${preW}:${preH}:force_original_aspect_ratio=increase`,
+    `crop=${preW}:${preH}`,
+    `zoompan=z='${kb.z}':x='${kb.x}':y='${kb.y}':d=${frames}:fps=${fps}:s=${W}x${ASSET_AREA_HEIGHT}`,
+    `pad=${W}:${H}:0:${ASSET_TOP_Y}:color=${padColor}`,
+    'format=yuv420p',
+  ].join(',');
+
+  const args = [
+    '-y',
+    '-i', assetPath,
+    '-vf', filter,
+    '-frames:v', frames.toString(),
+    '-r', fps.toString(),
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '20',
+    '-an',
+    outputPath,
+  ];
+  await runFfmpeg(args, logger);
+  return outputPath;
+}
+
+/**
+ * Fase 1: pre-procesa un video, recortado a `duration` segundos a partir
+ * de `trimStart`. Si el video original es mas corto, hace loop.
+ */
+async function buildVideoSegment(
+  { assetPath, duration, trimStart = 0, outputPath },
+  logger
+) {
+  const fps = BRAND.video.fps;
+  const padColor = ffmpegColor(BRAND.colors.bg_dark);
+  const W = BRAND.video.width;
+  const H = BRAND.video.height;
+
+  const filter = [
+    `scale=${W}:${ASSET_AREA_HEIGHT}:force_original_aspect_ratio=decrease`,
+    `pad=${W}:${ASSET_AREA_HEIGHT}:(${W}-iw)/2:(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
+    `pad=${W}:${H}:0:${ASSET_TOP_Y}:color=${padColor}`,
+    `fps=${fps}`,
+    'format=yuv420p',
+  ].join(',');
+
+  const args = [
+    '-y',
+    '-stream_loop', '-1',           // loop infinito; -t corta a la duracion deseada
+    '-ss', trimStart.toString(),
+    '-i', assetPath,
+    '-t', duration.toString(),
+    '-vf', filter,
+    '-r', fps.toString(),
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '20',
+    '-an',
+    outputPath,
+  ];
+  await runFfmpeg(args, logger);
+  return outputPath;
+}
+
+/**
+ * Fase 2: concatena los segmentos con xfade.
+ * Para N segmentos calcula offsets como cumsum(audioDur).
+ */
+async function concatenateWithXfade(
+  { segmentPaths, audioDurations, outputPath },
+  logger
+) {
+  if (segmentPaths.length === 0) {
+    throw new Error('concatenateWithXfade: no segments');
+  }
+  if (segmentPaths.length === 1) {
+    // Caso trivial: copia directa.
+    const args = ['-y', '-i', segmentPaths[0], '-c', 'copy', outputPath];
+    await runFfmpeg(args, logger);
+    return outputPath;
+  }
+
+  const xfadeDur = BRAND.video.xfade_duration;
+  const xfadeName = BRAND.video.xfade_transition;
+
+  const inputs = segmentPaths.flatMap((p) => ['-i', p]);
+  const filters = [];
+  let prevLabel = '[0:v]';
+  let cumulative = 0;
+  for (let i = 1; i < segmentPaths.length; i++) {
+    cumulative += audioDurations[i - 1];
+    const outLabel = i === segmentPaths.length - 1 ? '[vout]' : `[v${i}]`;
+    filters.push(
+      `${prevLabel}[${i}:v]xfade=transition=${xfadeName}:duration=${xfadeDur}:offset=${cumulative.toFixed(3)}${outLabel}`
+    );
+    prevLabel = outLabel;
+  }
+
+  const args = [
+    '-y',
+    ...inputs,
+    '-filter_complex', filters.join(';'),
+    '-map', '[vout]',
+    '-c:v', 'libx264',
+    '-preset', 'medium',
+    '-crf', '20',
+    '-an',
+    outputPath,
+  ];
+  await runFfmpeg(args, logger);
+  return outputPath;
+}
+
+/**
+ * Fase 3: aplica audio + subtitulos + firma + badge sobre el video concatenado.
+ */
+async function applyOverlays(
+  {
+    videoPath,
+    audioPath,
+    subtitlePath,
+    signatureText,
+    titleBadge,
+    fontDir,
+    outputPath,
+  },
+  logger
+) {
+  const sigBarColor = ffmpegColorAlpha(BRAND.colors.bg_dark, BRAND.signature.bar_alpha);
+  const sigTextColor = ffmpegColor(BRAND.colors.text_primary);
+  const goldColor = ffmpegColor(BRAND.colors.accent_gold);
+  const navyColor = ffmpegColor(BRAND.colors.bg_dark);
+
+  // FFmpeg en Linux usa rutas POSIX. Normalizamos `\` a `/` por si el worker
+  // se ejecuta en Windows durante desarrollo local.
+  const sigFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_signature);
+  const titleFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_title);
+  const subtitlePathPosix = subtitlePath.replace(/\\/g, '/');
+
+  const filters = [];
+
+  // Capa 1: subtitulos quemados (renderer libass via filtro `ass`).
+  filters.push(`ass='${escapeFilterSingleQuoted(subtitlePathPosix)}'`);
+
+  // Capa 2: barra navy semitransparente al pie + firma centrada.
+  filters.push(
+    `drawbox=x=0:y=${SIG_BAR_Y}:w=${BRAND.video.width}:h=${BRAND.signature.bar_height}:color=${sigBarColor}:t=fill`
+  );
+  const sigTextY = SIG_BAR_Y + Math.round((BRAND.signature.bar_height - BRAND.signature.font_size) / 2) - 4;
+  filters.push(
+    [
+      `drawtext=fontfile='${escapeFilterSingleQuoted(sigFontFile)}'`,
+      `text='${escapeFilterSingleQuoted(signatureText || BRAND.signature.text)}'`,
+      `fontsize=${BRAND.signature.font_size}`,
+      `fontcolor=${sigTextColor}`,
+      'x=(w-text_w)/2',
+      `y=${sigTextY}`,
+    ].join(':')
+  );
+
+  // Capa 3 (opcional): badge titulo dorado los primeros N segundos.
+  // TODO: para esquinas redondeadas en el badge habria que renderizar un
+  // PNG con alpha y hacer overlay en lugar de drawbox. Pendiente fase 2.
+  if (titleBadge?.show && titleBadge.text) {
+    const dur = titleBadge.duration ?? BRAND.title_badge.duration_default;
+    const fontSize = BRAND.title_badge.font_size;
+    const padH = BRAND.title_badge.horizontal_padding;
+    const padV = BRAND.title_badge.vertical_padding;
+    // Estimacion de ancho (FFmpeg no expone text_w en drawbox). El ratio
+    // 0.55 es una aproximacion para Montserrat Bold a este tamano.
+    const approxBadgeWidth = Math.min(
+      BRAND.video.width - 80,
+      Math.round(titleBadge.text.length * fontSize * 0.55 + padH * 2)
+    );
+    const approxBadgeHeight = fontSize + padV * 2;
+    const badgeY = pctY(BRAND.positions.title_badge_y_pct);
+    const badgeX = Math.round((BRAND.video.width - approxBadgeWidth) / 2);
+    filters.push(
+      `drawbox=enable='lt(t,${dur})':x=${badgeX}:y=${badgeY}:w=${approxBadgeWidth}:h=${approxBadgeHeight}:color=${navyColor}:t=fill`
+    );
+    filters.push(
+      [
+        `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
+        `text='${escapeFilterSingleQuoted(titleBadge.text)}'`,
+        `fontsize=${fontSize}`,
+        `fontcolor=${goldColor}`,
+        'x=(w-text_w)/2',
+        `y=${badgeY + padV}`,
+        `enable='lt(t,${dur})'`,
+      ].join(':')
+    );
+  }
+
+  const vf = filters.join(',');
+
+  const args = [
+    '-y',
+    '-i', videoPath,
+    '-i', audioPath,
+    '-filter_complex', `[0:v]${vf}[v]`,
+    '-map', '[v]',
+    '-map', '1:a',
+    '-c:v', 'libx264',
+    '-preset', BRAND.video.preset,
+    '-crf', BRAND.video.crf.toString(),
+    '-c:a', 'aac',
+    '-b:a', BRAND.video.audio_bitrate,
+    '-r', BRAND.video.fps.toString(),
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    '-shortest',
+    outputPath,
+  ];
+  await runFfmpeg(args, logger);
+  return outputPath;
+}
+
+/**
+ * Orquestador principal. Descarga assets, ejecuta las 3 fases, devuelve
+ * la ruta del MP4 final + metadata.
+ *
+ * @param {object}   params
+ * @param {object}   params.spec        Especificacion JSON ya validada.
+ * @param {string}   params.sessionDir  Directorio de trabajo creado por el caller.
+ * @param {string}   params.fontDir     Directorio donde estan las TTF Montserrat.
+ * @param {object}   [params.logger]    Pino logger opcional.
+ * @returns {Promise<{outputPath:string, metadata:object}>}
+ */
+export async function composeReel({ spec, sessionDir, fontDir, logger, audioFilePath, assetFilePaths = {} }) {
+  const t0 = Date.now();
+
+  // Paso 0: preparar audio. Si el caller paso un fichero local (modo
+  // multipart desde n8n), lo copiamos al sessionDir; en otro caso lo
+  // descargamos desde spec.audio_url.
+  const audioExt = audioFilePath
+    ? path.extname(audioFilePath) || '.mp3'
+    : extFromUrl(spec.audio_url, '.mp3');
+  const audioPath = path.join(sessionDir, `audio${audioExt}`);
+
+  const audioDurations = spec.segments.map((s) => s.end - s.start);
+  const xfadeDur = BRAND.video.xfade_duration;
+
+  // Descargas en paralelo (audio + todos los assets cuando proceda).
+  const segmentPaths = new Array(spec.segments.length);
+
+  const audioTask = audioFilePath
+    ? copyFile(audioFilePath, audioPath)
+    : downloadToFile(spec.audio_url, audioPath);
+
+  await Promise.all([
+    audioTask,
+    ...spec.segments.map(async (seg, i) => {
+      // Si el caller proporciono un fichero local para este asset, usarlo;
+      // de lo contrario, descargar la URL del spec.
+      if (assetFilePaths[i]) {
+        const ext = path.extname(assetFilePaths[i]) || (seg.asset.type === 'image' ? '.jpg' : '.mp4');
+        const dest = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
+        await copyFile(assetFilePaths[i], dest);
+        seg._localPath = dest;
+        return;
+      }
+      const ext = extFromUrl(seg.asset.url, seg.asset.type === 'image' ? '.jpg' : '.mp4');
+      const assetPath = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
+      await downloadToFile(seg.asset.url, assetPath);
+      seg._localPath = assetPath;
+    }),
+  ]);
+
+  const audioDurationProbed = await probeDuration(audioPath).catch(() => null);
+  logger?.info?.(
+    { audioDurationProbed, audioDurationSpec: spec.duration },
+    'audio downloaded and probed'
+  );
+
+  // Paso 1: pre-procesar segmentos en paralelo (cada ffmpeg es independiente).
+  await Promise.all(
+    spec.segments.map(async (seg, i) => {
+      const audioDur = audioDurations[i];
+      const isLast = i === spec.segments.length - 1;
+      const visualDur = isLast ? audioDur : audioDur + xfadeDur;
+      const segOut = path.join(sessionDir, `seg_${String(i).padStart(2, '0')}.mp4`);
+
+      if (seg.asset.type === 'image') {
+        await buildImageSegment(
+          {
+            assetPath: seg._localPath,
+            duration: visualDur,
+            outputPath: segOut,
+            segIndex: i,
+            kenBurnsHint: seg.asset.ken_burns,
+          },
+          logger
+        );
+      } else if (seg.asset.type === 'video') {
+        await buildVideoSegment(
+          {
+            assetPath: seg._localPath,
+            duration: visualDur,
+            trimStart: seg.asset.trim_start ?? 0,
+            outputPath: segOut,
+          },
+          logger
+        );
+      } else {
+        throw new Error(`Tipo de asset desconocido en segmento ${i}: ${seg.asset.type}`);
+      }
+      segmentPaths[i] = segOut;
+    })
+  );
+
+  // Paso 2: subtitulos .ass.
+  const subtitlePath = path.join(sessionDir, 'subtitles.ass');
+  await writeSubtitleFile(spec.segments, subtitlePath);
+
+  // Paso 3: concat con xfade.
+  const concatPath = path.join(sessionDir, 'concat.mp4');
+  await concatenateWithXfade(
+    { segmentPaths, audioDurations, outputPath: concatPath },
+    logger
+  );
+
+  // Paso 4: overlays + audio.
+  const outputPath = path.join(sessionDir, 'output.mp4');
+  await applyOverlays(
+    {
+      videoPath: concatPath,
+      audioPath,
+      subtitlePath,
+      signatureText: spec.signature || BRAND.signature.text,
+      titleBadge: spec.title_badge,
+      fontDir,
+      outputPath,
+    },
+    logger
+  );
+
+  const elapsedMs = Date.now() - t0;
+  return {
+    outputPath,
+    metadata: {
+      session_dir: sessionDir,
+      audio_duration: audioDurationProbed ?? spec.duration ?? null,
+      segment_count: spec.segments.length,
+      elapsed_ms: elapsedMs,
+    },
+  };
+}

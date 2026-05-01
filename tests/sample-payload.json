@@ -1,0 +1,49 @@
+{
+  "audio_url": "REEMPLAZA_CON_URL_PUBLICA_DEL_AUDIO_DE_PRUEBA.mp3",
+  "duration": 13.0,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 4.5,
+      "subtitle_text": "El sistema renina-angiotensina regula la presión arterial",
+      "asset": {
+        "type": "image",
+        "url": "https://images.pexels.com/photos/4226119/pexels-photo-4226119.jpeg?auto=compress&cs=tinysrgb&w=1280",
+        "source": "pexels",
+        "asset_id": "4226119",
+        "ken_burns": { "from": "center", "to": "zoom_in", "factor": 1.15 }
+      }
+    },
+    {
+      "start": 4.5,
+      "end": 9.0,
+      "subtitle_text": "Cuando los riñones detectan baja perfusión liberan renina",
+      "asset": {
+        "type": "image",
+        "url": "https://images.pexels.com/photos/4226764/pexels-photo-4226764.jpeg?auto=compress&cs=tinysrgb&w=1280",
+        "source": "pexels",
+        "asset_id": "4226764",
+        "ken_burns": { "to": "pan_right" }
+      }
+    },
+    {
+      "start": 9.0,
+      "end": 13.0,
+      "subtitle_text": "Esto activa la cascada que regula el volumen sanguíneo y la tensión",
+      "asset": {
+        "type": "image",
+        "url": "https://images.pexels.com/photos/4173251/pexels-photo-4173251.jpeg?auto=compress&cs=tinysrgb&w=1280",
+        "source": "pexels",
+        "asset_id": "4173251",
+        "ken_burns": { "to": "drift_up" }
+      }
+    }
+  ],
+  "title_badge": {
+    "show": true,
+    "text": "SISTEMA RAA",
+    "duration": 2.0
+  },
+  "signature": "@draydeliserodriguez",
+  "output_format": "mp4"
+}

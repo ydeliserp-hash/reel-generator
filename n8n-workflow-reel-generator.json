@@ -1,0 +1,609 @@
+{
+  "name": "Reel Generator (@draydeliserodriguez)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reel-generator",
+        "responseMode": "responseNode",
+        "options": {
+          "rawBody": false,
+          "binaryData": true
+        }
+      },
+      "id": "n_webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "reel-generator"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "duplicateItem": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a_session",
+              "name": "session_id",
+              "type": "string",
+              "value": "={{ $execution.id + '_' + $now.toMillis() }}"
+            },
+            {
+              "id": "a_topic",
+              "name": "topic",
+              "type": "string",
+              "value": "={{ $json.body?.topic || '' }}"
+            },
+            {
+              "id": "a_style",
+              "name": "style",
+              "type": "string",
+              "value": "={{ $json.body?.style || 'educational' }}"
+            },
+            {
+              "id": "a_script",
+              "name": "script",
+              "type": "string",
+              "value": "={{ $json.body?.script || '' }}"
+            },
+            {
+              "id": "a_signature",
+              "name": "signature",
+              "type": "string",
+              "value": "@draydeliserodriguez"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "n_init",
+      "name": "Initialize Session",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": false,
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "audio"
+            },
+            {
+              "name": "model",
+              "value": "whisper-large-v3-turbo"
+            },
+            {
+              "name": "response_format",
+              "value": "verbose_json"
+            },
+            {
+              "name": "timestamp_granularities[]",
+              "value": "word"
+            },
+            {
+              "name": "language",
+              "value": "es"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $('Initialize Session').first().json.script || 'Cardiología, fisiología, sistema renina-angiotensina-aldosterona, hipertensión, electrocardiograma, presión arterial, riñón, corazón.' }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "n_whisper",
+      "name": "Whisper Transcribe",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq API Key (Header Auth)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Segment Transcript\n// -------------------------------------------------------------\n// Agrupa las palabras devueltas por Whisper en \"chunks\" de 3-7s\n// respetando finales de frase (puntos, comas largas).\n//\n// Output: UN solo item con `segments: Array<{start, end, text}>`,\n// y se reanuda el binario `audio` del Webhook para los nodos siguientes.\n// -------------------------------------------------------------\n\nconst transcript = $input.first().json;\nconst words = transcript.words || [];\n\nconst MIN_DUR = 3.0;\nconst MAX_DUR = 7.0;\nconst TARGET_DUR = 5.0;\n\nlet segments = [];\n\nif (words.length === 0) {\n  // Whisper no devolvio palabras (configuracion antigua del modelo, etc).\n  // Fallback: un unico segmento con el texto completo.\n  const total = transcript.duration || transcript.segments?.[transcript.segments.length-1]?.end || 0;\n  if (transcript.text && total > 0) {\n    segments = [{ start: 0, end: total, text: transcript.text.trim() }];\n  } else {\n    throw new Error('Whisper devolvio una respuesta vacia o sin timing.');\n  }\n} else {\n  let cur = { start: words[0].start, words: [] };\n  for (let i = 0; i < words.length; i++) {\n    const w = words[i];\n    cur.words.push(w);\n    const dur = w.end - cur.start;\n    const wordTxt = String(w.word || '').trim();\n    const endsWithPunct = /[.!?]$/.test(wordTxt) || (dur >= TARGET_DUR && /,$/.test(wordTxt));\n    const isLast = i === words.length - 1;\n\n    if (isLast || dur >= MAX_DUR || (dur >= MIN_DUR && endsWithPunct)) {\n      segments.push({\n        start: cur.start,\n        end: w.end,\n        text: cur.words.map(x => String(x.word || '').trim()).join(' ').replace(/\\s+/g, ' ').trim()\n      });\n      if (!isLast) {\n        cur = { start: words[i+1].start, words: [] };\n      }\n    }\n  }\n}\n\n// Devolvemos UN item con todo el array (\"Once for all items\" pattern)\n// y reanudamos el binario `audio` del Webhook para que llegue al worker.\nreturn [{\n  json: {\n    segments,\n    duration: transcript.duration ?? null,\n    full_text: transcript.text ?? ''\n  },\n  binary: $('Webhook').first().binary\n}];\n"
+      },
+      "id": "n_segment",
+      "name": "Segment Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.3,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Eres un planificador visual para reels medicos en espanol publicados por una cardiologa (@draydeliserodriguez).\\n\\nTema del reel: {{ $('Initialize Session').first().json.topic || 'no especificado' }}\\nEstilo: {{ $('Initialize Session').first().json.style || 'educational' }}\\n\\nPara cada segmento de transcripcion que recibas, devuelve un objeto JSON con estos campos:\\n  - keywords_en: 3-5 palabras clave EN INGLES (minusculas, separadas por espacios) para buscar B-roll en bancos de imagenes/videos. NO uses terminos en espanol ni acentos.\\n  - asset_type_preference: 'image' | 'video' | 'either' segun convenga al concepto.\\n  - medical_concept: el concepto cardiologico o fisiologico principal del segmento, frase corta en espanol.\\n\\nReglas:\\n  - Las keywords deben representar conceptos VISUALES concretos (heart, kidney, blood pressure, ECG, stethoscope, doctor, hospital, anatomy, blood cells, blood vessels...) NO terminos genericos como 'medicine' o 'health'.\\n  - Si el concepto es abstracto (ej. 'regulacion hormonal'), elige una imagen metaforica concreta (ej. 'kidney anatomy' o 'molecular biology').\\n  - Evita terminos repetidos entre segmentos contiguos.\\n\\nDevuelve EXACTAMENTE este JSON, sin texto adicional ni markdown:\\n  { \\\"plan\\\": [ {\\\"keywords_en\\\": \\\"...\\\", \\\"asset_type_preference\\\": \\\"...\\\", \\\"medical_concept\\\": \\\"...\\\"}, ... ] }\\n\\nEl array 'plan' debe tener la MISMA longitud y orden que el array de entrada.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(JSON.stringify($json.segments)) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "n_planner",
+      "name": "Visual Planner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq API Key (Header Auth)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Merge Plan\n// -------------------------------------------------------------\n// Combina los segmentos de Whisper (texto + timing) con el plan visual\n// de Llama (keywords_en + asset_type_preference + medical_concept).\n//\n// El binario `audio` se reanuda del Webhook para llegar al worker mas tarde.\n// -------------------------------------------------------------\n\nconst segments = $('Segment Transcript').first().json.segments;\nconst groqResponse = $input.first().json;\nconst content = groqResponse.choices?.[0]?.message?.content;\nif (!content) {\n  throw new Error('Visual Planner: Groq no devolvio contenido. Respuesta: ' + JSON.stringify(groqResponse).slice(0, 400));\n}\n\nlet parsed;\ntry {\n  parsed = typeof content === 'string' ? JSON.parse(content) : content;\n} catch (e) {\n  throw new Error('Visual Planner: JSON invalido. content=' + String(content).slice(0, 400));\n}\n\nconst plan = parsed.plan;\nif (!Array.isArray(plan) || plan.length !== segments.length) {\n  throw new Error(`Visual Planner: longitud del plan (${plan?.length}) != segmentos (${segments.length})`);\n}\n\nconst merged = segments.map((s, i) => ({\n  start: s.start,\n  end: s.end,\n  text: s.text,\n  keywords_en: String(plan[i].keywords_en || 'medical anatomy').toLowerCase(),\n  asset_type_preference: plan[i].asset_type_preference || 'either',\n  medical_concept: plan[i].medical_concept || ''\n}));\n\nreturn [{\n  json: {\n    segments: merged,\n    session_id: $('Initialize Session').first().json.session_id,\n    topic: $('Initialize Session').first().json.topic,\n    style: $('Initialize Session').first().json.style,\n    duration: $('Segment Transcript').first().json.duration\n  },\n  binary: $('Webhook').first().binary\n}];\n"
+      },
+      "id": "n_merge_plan",
+      "name": "Merge Plan",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT source, asset_id FROM asset_usage WHERE status IN ('reserved', 'used');",
+        "options": {}
+      },
+      "id": "n_blocked",
+      "name": "Get Blocked Assets",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "reels-postgres",
+          "name": "Reels Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Search & Pick Assets\n// -------------------------------------------------------------\n// Para cada segmento:\n//   1) Pexels: 1 busqueda de imagenes + 1 de videos (vertical).\n//   2) Pixabay como fallback si Pexels devuelve <3 candidatos.\n//   3) Filtra los assets bloqueados (lista de Get Blocked Assets) y los\n//      ya elegidos en este mismo reel.\n//   4) Elige el primer candidato disponible.\n//\n// Sale: 1 item con segments enriquecidos con `asset = {type, url, source, asset_id}`.\n// -------------------------------------------------------------\n\nconst data = $('Merge Plan').first().json;\nconst segs = data.segments;\nconst blockedRows = $items('Get Blocked Assets') || [];\nconst blockedSet = new Set(blockedRows.map(r => `${r.json.source}:${r.json.asset_id}`));\n\nconst PEXELS_KEY = $env.PEXELS_API_KEY;\nconst PIXABAY_KEY = $env.PIXABAY_API_KEY;\nif (!PEXELS_KEY) throw new Error('PEXELS_API_KEY no esta definida en el entorno de n8n');\n\nasync function pexelsImages(query) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&orientation=portrait&per_page=15`,\n      headers: { Authorization: PEXELS_KEY },\n      json: true\n    });\n    return (res.photos || []).map(p => ({\n      type: 'image',\n      source: 'pexels',\n      asset_id: String(p.id),\n      url: p.src?.large2x || p.src?.large || p.src?.original\n    })).filter(c => c.url);\n  } catch (e) { return []; }\n}\n\nasync function pexelsVideos(query) {\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&orientation=portrait&per_page=15`,\n      headers: { Authorization: PEXELS_KEY },\n      json: true\n    });\n    return (res.videos || []).map(v => {\n      const file = (v.video_files || []).find(f => f.quality === 'hd') ||\n                   (v.video_files || []).find(f => f.quality === 'sd') ||\n                   (v.video_files || [])[0];\n      return file ? {\n        type: 'video',\n        source: 'pexels',\n        asset_id: String(v.id),\n        url: file.link\n      } : null;\n    }).filter(Boolean);\n  } catch (e) { return []; }\n}\n\nasync function pixabayImages(query) {\n  if (!PIXABAY_KEY) return [];\n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'GET',\n      url: `https://pixabay.com/api/?key=${PIXABAY_KEY}&q=${encodeURIComponent(query)}&orientation=vertical&per_page=15&safesearch=true`,\n      json: true\n    });\n    return (res.hits || []).map(p => ({\n      type: 'image',\n      source: 'pixabay',\n      asset_id: String(p.id),\n      url: p.largeImageURL || p.webformatURL\n    })).filter(c => c.url);\n  } catch (e) { return []; }\n}\n\nconst pickedKeys = new Set();\nconst enriched = [];\n\nfor (let i = 0; i < segs.length; i++) {\n  const s = segs[i];\n  const q = s.keywords_en || s.medical_concept || 'medical anatomy';\n  const wantVideo = s.asset_type_preference === 'video';\n  const wantImage = s.asset_type_preference === 'image';\n\n  let candidates = [];\n  if (wantVideo) {\n    candidates = candidates.concat(await pexelsVideos.call(this, q));\n    candidates = candidates.concat(await pexelsImages.call(this, q));\n  } else if (wantImage) {\n    candidates = candidates.concat(await pexelsImages.call(this, q));\n  } else {\n    candidates = candidates.concat(await pexelsImages.call(this, q));\n    candidates = candidates.concat(await pexelsVideos.call(this, q));\n  }\n\n  if (candidates.length < 3) {\n    candidates = candidates.concat(await pixabayImages.call(this, q));\n  }\n\n  const winner = candidates.find(c =>\n    !blockedSet.has(`${c.source}:${c.asset_id}`) &&\n    !pickedKeys.has(`${c.source}:${c.asset_id}`)\n  );\n\n  if (!winner) {\n    throw new Error(`Sin assets disponibles para el segmento ${i} (\"${s.medical_concept || s.keywords_en}\"). ` +\n                    `Probados ${candidates.length} candidatos, todos ya usados.`);\n  }\n\n  pickedKeys.add(`${winner.source}:${winner.asset_id}`);\n  enriched.push({\n    start: s.start,\n    end: s.end,\n    subtitle_text: s.text,\n    asset: {\n      type: winner.type,\n      url: winner.url,\n      source: winner.source,\n      asset_id: winner.asset_id\n    }\n  });\n}\n\nreturn [{\n  json: {\n    segments: enriched,\n    session_id: data.session_id,\n    topic: data.topic,\n    style: data.style,\n    duration: data.duration\n  },\n  binary: $('Webhook').first().binary\n}];\n"
+      },
+      "id": "n_search_pick",
+      "name": "Search & Pick Assets",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO asset_usage (source, asset_id, asset_type, asset_url, used_in_reel, status, topic, reserved_at)\nSELECT s.source, s.asset_id, s.asset_type, s.asset_url, $1, 'reserved', $2, NOW()\nFROM jsonb_to_recordset($3::jsonb) AS s(source text, asset_id text, asset_type text, asset_url text)\nON CONFLICT (source, asset_id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ $json.session_id }}, {{ $json.topic || '' }}, {{ JSON.stringify($json.segments.map(s => ({source: s.asset.source, asset_id: s.asset.asset_id, asset_type: s.asset.type, asset_url: s.asset.url}))) }}"
+        }
+      },
+      "id": "n_reserve",
+      "name": "Reserve Assets",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2000,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "reels-postgres",
+          "name": "Reels Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "language": "javaScript",
+        "jsCode": "// Build Compose Spec\n// -------------------------------------------------------------\n// Construye el JSON spec que se enviara al worker FFmpeg en el campo\n// `spec` del multipart. El audio va por separado como fichero binario\n// (campo `audio`), por lo que `audio_url` es solo informativo.\n// -------------------------------------------------------------\n\nconst data = $('Search & Pick Assets').first().json;\nconst topic = (data.topic || '').trim();\n\nconst spec = {\n  audio_url: 'inline://multipart-audio',\n  duration: data.duration,\n  segments: data.segments,\n  title_badge: topic\n    ? { show: true, text: topic.toUpperCase().slice(0, 60), duration: 2.0 }\n    : { show: false },\n  signature: '@draydeliserodriguez',\n  output_format: 'mp4'\n};\n\nreturn [{\n  json: {\n    spec,\n    session_id: data.session_id\n  },\n  binary: $('Webhook').first().binary\n}];\n"
+      },
+      "id": "n_build_spec",
+      "name": "Build Compose Spec",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.FFMPEG_WORKER_URL || 'http://ffmpeg-reel-worker:3000' }}/compose",
+        "sendHeaders": false,
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "spec",
+              "value": "={{ JSON.stringify($json.spec) }}"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "audio",
+              "inputDataFieldName": "audio"
+            }
+          ]
+        },
+        "options": {
+          "timeout": "={{ parseInt($env.FFMPEG_WORKER_TIMEOUT_MS || '300000') }}",
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "n_worker",
+      "name": "FFmpeg Worker",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE asset_usage\nSET status = 'used', used_at = NOW()\nWHERE used_in_reel = $1 AND status = 'reserved';",
+        "options": {
+          "queryReplacement": "={{ $('Build Compose Spec').first().json.session_id }}"
+        }
+      },
+      "id": "n_confirm",
+      "name": "Confirm Assets Used",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2660,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "reels-postgres",
+          "name": "Reels Postgres"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c_drive",
+              "leftValue": "={{ $env.GDRIVE_OUTPUT_FOLDER_ID }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "n_if_drive",
+      "name": "IF Drive Enabled",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "=reel-{{ $('Build Compose Spec').first().json.session_id }}.mp4",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.GDRIVE_OUTPUT_FOLDER_ID }}"
+        },
+        "options": {}
+      },
+      "id": "n_drive",
+      "name": "Upload to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3100,
+        200
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "google-drive-oauth",
+          "name": "Google Drive OAuth2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "binary",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "video/mp4"
+              },
+              {
+                "name": "Content-Disposition",
+                "value": "=attachment; filename=\"reel-{{ $('Build Compose Spec').first().json.session_id }}.mp4\""
+              },
+              {
+                "name": "X-Session-Id",
+                "value": "={{ $('Build Compose Spec').first().json.session_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "n_respond",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3320,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Initialize Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Initialize Session": {
+      "main": [
+        [
+          {
+            "node": "Whisper Transcribe",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Whisper Transcribe": {
+      "main": [
+        [
+          {
+            "node": "Segment Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Segment Transcript": {
+      "main": [
+        [
+          {
+            "node": "Visual Planner",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Visual Planner": {
+      "main": [
+        [
+          {
+            "node": "Merge Plan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Plan": {
+      "main": [
+        [
+          {
+            "node": "Get Blocked Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Blocked Assets": {
+      "main": [
+        [
+          {
+            "node": "Search & Pick Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search & Pick Assets": {
+      "main": [
+        [
+          {
+            "node": "Reserve Assets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Assets": {
+      "main": [
+        [
+          {
+            "node": "Build Compose Spec",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Compose Spec": {
+      "main": [
+        [
+          {
+            "node": "FFmpeg Worker",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FFmpeg Worker": {
+      "main": [
+        [
+          {
+            "node": "Confirm Assets Used",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Assets Used": {
+      "main": [
+        [
+          {
+            "node": "IF Drive Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Drive Enabled": {
+      "main": [
+        [
+          {
+            "node": "Upload to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Drive": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "tags": [
+    {
+      "name": "reels"
+    },
+    {
+      "name": "draydeliserodriguez"
+    }
+  ],
+  "pinData": {},
+  "id": "reel-generator-001",
+  "meta": {
+    "instanceId": "reel-generator"
+  }
+}

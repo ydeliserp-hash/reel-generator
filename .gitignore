@@ -1,0 +1,23 @@
+.env
+.env.local
+node_modules/
+*.log
+.DS_Store
+
+# Configuración local del editor (Claude Code, VS Code, etc.)
+.claude/
+.vscode/
+
+# Sesiones de trabajo del worker
+ffmpeg-reel-worker/tmp/
+ffmpeg-reel-worker/sessions/
+
+# Fuentes descargadas en build
+ffmpeg-reel-worker/assets/fonts/*.ttf
+
+# Outputs de pruebas locales
+tests/output/
+tests/*.mp4
+
+# Audio de prueba (si pesa)
+tests/sample-audio.mp3

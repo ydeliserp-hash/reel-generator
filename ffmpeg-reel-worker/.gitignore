@@ -1,0 +1,13 @@
+node_modules/
+npm-debug.log
+.env
+.env.local
+.DS_Store
+*.log
+tmp/
+sessions/
+
+# Las fuentes Montserrat se descargan en build (scripts/fetch-fonts.sh).
+# No las versionamos para respetar la licencia y no inflar el repo.
+assets/fonts/*.ttf
+!assets/fonts/.gitkeep
