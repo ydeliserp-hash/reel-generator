@@ -42,7 +42,8 @@ const FONT_DIR = process.env.FONT_DIR || '/usr/share/fonts/truetype/montserrat';
 const ASSETS_DIR = process.env.ASSETS_DIR || path.resolve('./assets');
 const KEEP_SESSIONS = process.env.KEEP_SESSIONS === '1';
 const MAX_UPLOAD_MB = parseInt(process.env.MAX_UPLOAD_MB || '50', 10);
-const REQ_BODY_LIMIT = process.env.REQ_BODY_LIMIT || '5mb';
+const REQ_BODY_LIMIT = process.env.REQ_BODY_LIMIT || '50mb';
+const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 
 const logger = pino({ level: LOG_LEVEL });
@@ -262,6 +263,106 @@ app.post('/compose', composeUpload, async (req, res) => {
     finalize();
   });
   stream.pipe(res);
+});
+
+/**
+ * POST /transcribe — proxy a Groq Whisper.
+ *
+ * Existe porque el HTTP Request node + Code node de n8n v2.13.3 tienen
+ * bugs con multipart/binary que rompen la llamada directa a Groq. El
+ * worker la hace en su lugar (Node 20 nativo, sin sandbox restrictivo).
+ *
+ * Acepta dos formatos:
+ *   1) multipart/form-data con campo `audio` (file)
+ *   2) application/json con `{ audio_base64, filename, mime_type, language? }`
+ *
+ * Devuelve el JSON tal cual lo devuelve Groq (verbose_json).
+ */
+const transcribeUpload = upload.single('audio');
+app.post('/transcribe', (req, res, next) => {
+  // Si es multipart, pasamos por multer; si no, dejamos pasar para que
+  // express.json haya parseado req.body en el middleware global.
+  const ct = req.headers['content-type'] || '';
+  if (ct.startsWith('multipart/form-data')) return transcribeUpload(req, res, next);
+  return next();
+}, async (req, res) => {
+  if (!GROQ_API_KEY) {
+    return res.status(500).json({
+      error: 'groq_api_key_missing',
+      message: 'GROQ_API_KEY no esta configurada en el entorno del worker',
+    });
+  }
+
+  let audioBuffer;
+  let filename = 'audio.mp3';
+  let mimeType = 'audio/mpeg';
+  let language = 'es';
+  let prompt;
+
+  try {
+    if (req.file) {
+      // Modo multipart
+      const fs = await import('node:fs/promises');
+      audioBuffer = await fs.readFile(req.file.path);
+      filename = req.file.originalname || filename;
+      mimeType = req.file.mimetype || mimeType;
+      language = req.body?.language || language;
+      prompt = req.body?.prompt;
+    } else {
+      // Modo JSON con base64
+      const body = req.body || {};
+      if (!body.audio_base64) {
+        return res.status(400).json({ error: 'invalid_request', message: 'Falta audio_base64 en el body JSON' });
+      }
+      audioBuffer = Buffer.from(body.audio_base64, 'base64');
+      filename = body.filename || filename;
+      mimeType = body.mime_type || mimeType;
+      language = body.language || language;
+      prompt = body.prompt;
+    }
+  } catch (e) {
+    return res.status(400).json({ error: 'invalid_request', message: e.message });
+  }
+
+  if (mimeType === 'application/octet-stream') mimeType = 'audio/mpeg';
+
+  // Construye FormData (Node 20 nativo) y llama a Groq.
+  const form = new FormData();
+  form.append('file', new Blob([audioBuffer], { type: mimeType }), filename);
+  form.append('model', 'whisper-large-v3-turbo');
+  form.append('response_format', 'verbose_json');
+  form.append('language', language);
+  if (prompt) form.append('prompt', prompt);
+
+  let groqRes;
+  try {
+    groqRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+      body: form,
+    });
+  } catch (e) {
+    req.log.error({ err: e.message }, 'groq fetch failed');
+    return res.status(502).json({ error: 'groq_unreachable', message: e.message });
+  }
+
+  const text = await groqRes.text();
+  if (!groqRes.ok) {
+    req.log.warn({ status: groqRes.status, body: text.slice(0, 500) }, 'groq returned error');
+    return res.status(groqRes.status).json({
+      error: 'groq_error',
+      status: groqRes.status,
+      body: text.slice(0, 2000),
+    });
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    return res.status(502).json({ error: 'groq_bad_json', body: text.slice(0, 2000) });
+  }
+  res.json(parsed);
 });
 
 // 404 catch-all
