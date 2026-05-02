@@ -260,6 +260,34 @@ app.post('/compose', composeUpload, async (req, res) => {
     });
   }
 
+  // Modo de respuesta:
+  //   - multipart input -> binario (mantiene compatibilidad con tests/smoke)
+  //   - JSON input -> JSON con mp4_base64 (evita problemas de encoding en n8n)
+  if (!isMultipart) {
+    try {
+      const fs = await import('node:fs/promises');
+      const mp4Buffer = await fs.readFile(result.outputPath);
+      res.setHeader('X-Session-Id', sessionId);
+      res.setHeader('X-Compose-Elapsed-Ms', String(result.metadata.elapsed_ms));
+      res.setHeader('X-Segment-Count', String(result.metadata.segment_count));
+      res.json({
+        success: true,
+        session_id: sessionId,
+        filename: `reel-${sessionId}.mp4`,
+        size_bytes: mp4Buffer.length,
+        mp4_base64: mp4Buffer.toString('base64'),
+        metadata: result.metadata,
+      });
+    } catch (err) {
+      req.log.error({ err: err.message }, 'failed to read mp4 for json response');
+      res.status(500).json({ error: 'mp4_read_failed', message: err.message });
+    } finally {
+      if (!KEEP_SESSIONS) cleanupSession(sessionDir, req.log);
+    }
+    return;
+  }
+
+  // Modo multipart -> stream binario (igual que antes).
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader(
     'Content-Disposition',
