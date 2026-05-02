@@ -264,9 +264,13 @@ app.post('/compose', composeUpload, async (req, res) => {
   //   - multipart input -> binario (mantiene compatibilidad con tests/smoke)
   //   - JSON input -> JSON con mp4_base64 (evita problemas de encoding en n8n)
   if (!isMultipart) {
+    // Modo JSON: devolvemos solo metadatos + URL para descargar el MP4.
+    // El MP4 se queda en disco y se descarga en una segunda llamada GET
+    // /output/:sessionId. Asi evitamos meter ~10 MB de base64 en JSON
+    // que satura la memoria de n8n.
     try {
       const fs = await import('node:fs/promises');
-      const mp4Buffer = await fs.readFile(result.outputPath);
+      const stat = await fs.stat(result.outputPath);
       res.setHeader('X-Session-Id', sessionId);
       res.setHeader('X-Compose-Elapsed-Ms', String(result.metadata.elapsed_ms));
       res.setHeader('X-Segment-Count', String(result.metadata.segment_count));
@@ -274,14 +278,16 @@ app.post('/compose', composeUpload, async (req, res) => {
         success: true,
         session_id: sessionId,
         filename: `reel-${sessionId}.mp4`,
-        size_bytes: mp4Buffer.length,
-        mp4_base64: mp4Buffer.toString('base64'),
+        size_bytes: stat.size,
+        output_url: `http://ffmpeg-reel-worker:3000/output/${sessionId}`,
         metadata: result.metadata,
       });
+      // NO cleanup aqui; cleanup lo hace el endpoint GET /output/:sessionId
+      // tras streamear el fichero. Si el cliente nunca descarga, queda
+      // huerfano y un cleanup periodico (TODO fase 2) lo borra.
     } catch (err) {
-      req.log.error({ err: err.message }, 'failed to read mp4 for json response');
-      res.status(500).json({ error: 'mp4_read_failed', message: err.message });
-    } finally {
+      req.log.error({ err: err.message }, 'failed to stat mp4 for json response');
+      res.status(500).json({ error: 'mp4_stat_failed', message: err.message });
       if (!KEEP_SESSIONS) cleanupSession(sessionDir, req.log);
     }
     return;
@@ -417,6 +423,51 @@ app.post('/transcribe', (req, res, next) => {
     return res.status(502).json({ error: 'groq_bad_json', body: text.slice(0, 2000) });
   }
   res.json(parsed);
+});
+
+/**
+ * GET /output/:sessionId — descarga el MP4 generado por una llamada anterior
+ * a /compose en modo JSON. Streamea el fichero (no lo carga en memoria) y
+ * limpia la sesion del disco tras servirlo correctamente.
+ */
+app.get('/output/:sessionId', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'invalid_session_id' });
+  }
+  const sessionDir = path.join(SESSIONS_ROOT, sessionId);
+  const outputPath = path.join(sessionDir, 'output.mp4');
+
+  let stat;
+  try {
+    const fs = await import('node:fs/promises');
+    stat = await fs.stat(outputPath);
+  } catch (e) {
+    return res.status(404).json({ error: 'output_not_found', session_id: sessionId });
+  }
+
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Length', String(stat.size));
+  res.setHeader('Content-Disposition', `attachment; filename="reel-${sessionId}.mp4"`);
+
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned || KEEP_SESSIONS) return;
+    cleaned = true;
+    cleanupSession(sessionDir, req.log);
+  };
+  res.on('finish', cleanup);
+  res.on('close', cleanup);
+
+  const stream = createReadStream(outputPath);
+  stream.on('error', (err) => {
+    req.log.error({ err: err.message, sessionId }, 'output stream error');
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'stream_failed', message: err.message });
+    }
+    cleanup();
+  });
+  stream.pipe(res);
 });
 
 // 404 catch-all
