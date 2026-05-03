@@ -486,6 +486,19 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     'audio downloaded and probed'
   );
 
+  // FIX corte audio: si el audio probed es mas largo que la suma de los
+  // segments (Whisper deja silencios fuera de sus segments), extendemos
+  // el ultimo segmento para cubrir esa diferencia. Asi el video final
+  // dura exactamente lo mismo que el audio.
+  if (audioDurationProbed && audioDurations.length > 0) {
+    const sumSeg = audioDurations.reduce((a, b) => a + b, 0);
+    if (audioDurationProbed > sumSeg + 0.05) {
+      const extra = audioDurationProbed - sumSeg;
+      audioDurations[audioDurations.length - 1] += extra;
+      logger?.info?.({ extra, sumSegBefore: sumSeg, audioDurationProbed }, 'extended last segment to cover trailing audio');
+    }
+  }
+
   // Paso 1: pre-procesar segmentos con paralelismo limitado.
   // Saturar la CPU con N ffmpeg simultaneos en un VPS pequeno provoca
   // timeouts y OOMs. max_parallel_segments controla el lote.
