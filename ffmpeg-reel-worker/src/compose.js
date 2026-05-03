@@ -137,11 +137,44 @@ async function buildImageSegment(
   const W = BRAND.video.width;
   const H = BRAND.video.height;
 
-  // Modo simple sin zoompan (optimizado para velocidad).
-  // TODO fase 2: re-habilitar zoompan cuando el VPS tenga mas CPU.
+  // Ken Burns ligero: pre-escalo el asset un 20% mas grande que el area,
+  // luego hago crop animado (pan o zoom) basado en el indice del segmento.
+  // Mas barato computacionalmente que zoompan y visualmente equivalente.
+  const preScale = 1.2;
+  const cropW = Math.round(W);
+  const cropH = ASSET_AREA_HEIGHT;
+  const scaledW = Math.round(W * preScale);
+  const scaledH = Math.round(ASSET_AREA_HEIGHT * preScale);
+  const dx = scaledW - cropW;   // margen horizontal para pan
+  const dy = scaledH - cropH;   // margen vertical para pan
+  const dur = Math.max(duration, 0.1);
+
+  // 4 variantes alternadas por segIndex para variedad visual
+  const variant = segIndex % 4;
+  let cropX, cropY;
+  if (variant === 0) {
+    // Pan izq -> der
+    cropX = `${dx}*t/${dur}`;
+    cropY = `${Math.round(dy / 2)}`;
+  } else if (variant === 1) {
+    // Zoom in (centrado)
+    cropX = `${Math.round(dx / 2)}`;
+    cropY = `${Math.round(dy / 2)}`;
+    // Para zoom usamos scale animada en vez de crop
+  } else if (variant === 2) {
+    // Pan der -> izq
+    cropX = `${dx}-${dx}*t/${dur}`;
+    cropY = `${Math.round(dy / 2)}`;
+  } else {
+    // Drift diagonal (arriba-izq -> abajo-der)
+    cropX = `${dx}*t/${dur}`;
+    cropY = `${dy}*t/${dur}`;
+  }
+
   const filter = [
-    `scale=${W}:${ASSET_AREA_HEIGHT}:force_original_aspect_ratio=decrease`,
-    `pad=${W}:${ASSET_AREA_HEIGHT}:(${W}-iw)/2:(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
+    `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
+    `crop=${scaledW}:${scaledH}`,
+    `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
     `pad=${W}:${H}:0:${ASSET_TOP_Y}:color=${padColor}`,
     `fps=${fps}`,
     'format=yuv420p',

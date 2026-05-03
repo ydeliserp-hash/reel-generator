@@ -27,13 +27,14 @@ export const BRAND = {
     file_title: 'Montserrat-Bold.ttf',
     file_signature: 'Montserrat-Bold.ttf',
   },
-  // Posiciones expresadas como fraccion del eje vertical (1920 px de alto).
+  // Posiciones expresadas como fraccion del eje vertical (1350 px de alto en 4:5).
+  // Calibradas para formato 1080x1350 (Instagram feed portrait).
   positions: {
-    subtitle_y_pct: 0.10,        // 192 px desde arriba (margen V del subtitulo)
-    asset_top_pct: 0.18,         // 346 px (linea superior del area de asset)
-    asset_bottom_pct: 0.88,      // 1690 px (linea inferior del area de asset)
-    title_badge_y_pct: 0.18,     // 346 px (debajo de los subtitulos)
-    signature_bar_y_pct: 0.953,  // centro vertical de la barra firma (~1830-1920)
+    subtitle_y_pct: 0.085,       // ~115 px desde arriba (margen V del subtitulo)
+    asset_top_pct: 0.18,         // ~243 px (linea superior del area de asset)
+    asset_bottom_pct: 0.85,      // ~1147 px (linea inferior del area de asset)
+    title_badge_y_pct: 0.18,     // ~243 px (debajo de los subtitulos)
+    signature_bar_y_pct: 0.945,  // centro vertical de la barra firma (~1275)
   },
   subtitle: {
     font_size: 64,
@@ -44,8 +45,8 @@ export const BRAND = {
   },
   signature: {
     text: process.env.BRAND_SIGNATURE || '@draydeliserodriguez',
-    font_size: 38,
-    bar_height: 90,
+    font_size: 34,
+    bar_height: 70,
     bar_alpha: 0.8,
   },
   title_badge: {
@@ -56,12 +57,12 @@ export const BRAND = {
   },
   video: {
     width: 1080,
-    height: 1920,
+    height: 1350,                  // Formato 4:5 (Instagram feed portrait)
     fps: 30,
     crf: 23,
     preset: 'ultrafast',
     audio_bitrate: '128k',
-    xfade_duration: 0.5,
+    xfade_duration: 1.0,           // Transiciones cinematograficas (antes 0.5s)
     xfade_transition: 'fade',
     // Numero maximo de segmentos pre-procesados en paralelo en fase 1.
     // Bajar este valor si el worker se queda sin RAM o CPU.
