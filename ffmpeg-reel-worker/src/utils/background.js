@@ -33,42 +33,57 @@ export async function ensureGradientBackground(outputPath, logger) {
   // bg_dark/bg_mid (que son muy parecidos). Manteniendo paleta navy.
   const cDark = '0x050E22';   // mucho mas oscuro que bg_dark (#0A1F3D)
   const cBright = '0x3578D5'; // mucho mas brillante que bg_mid (#1B4F8C)
-  // Rejilla bien VISIBLE: color azul claro fuerte (sin alpha para garantizar
-  // que se vea sobre el degradado), 2px, espaciado 80px (lineas mas separadas
-  // para no saturar). Si sigue sin verse, subir a 3-4px.
-  const gridFilter = 'drawgrid=width=80:height=80:thickness=2:color=0x6FA8DC';
+  // Patron tipo "globo terraqueo": circulos concentricos (paralelos)
+  // + lineas radiales (meridianos) que parten del centro.
+  const cx = Math.round(w / 2);
+  const cy = Math.round(h / 2);
+  const circleStep = 90;     // separacion entre circulos
+  const angleStep = 15;      // separacion angular entre meridianos (grados)
+  const lineThickness = 2;   // grosor en px de cada linea
+  // Expresion ffmpeg geq: pixel on-line si esta cerca de un circulo o de un radial
+  const onCircleExpr = `lt(abs(mod(hypot(X-${cx},Y-${cy}),${circleStep})-${circleStep}/2),${lineThickness})`;
+  const onRadialExpr = `lt(abs(mod(abs(atan2(Y-${cy},X-${cx})*180/PI),${angleStep})-${angleStep}/2),0.5)`;
+  const onLineExpr = `gt(${onCircleExpr}+${onRadialExpr},0)`;
+  // El filtro globe-grid genera un PNG transparente con lineas azul claro
+  // donde la condicion onLine es verdadera. Despues lo combinamos con el
+  // gradiente via overlay.
+  const globeGridFilter = `format=rgba,geq=r=111:g=168:b=220:a='if(${onLineExpr},220,0)'`;
 
+  // Generamos en una sola llamada: gradiente lineal + overlay del globe-grid
+  // [0:v] = gradiente, [1:v] = patron globe transparente
+  // overlay los compone en el output final.
   try {
-    // Gradiente lineal diagonal (esquina top-left oscura, bottom-right clara)
-    // + rejilla azul claro visible tipo UI medico
     await runFfmpeg([
       '-y',
       '-f', 'lavfi',
       '-i', `gradients=size=${w}x${h}:c0=${cDark}:c1=${cBright}:x0=0:y0=0:x1=${w}:y1=${h}:type=linear:duration=1:rate=1`,
-      '-vf', gridFilter,
+      '-f', 'lavfi',
+      '-i', `color=c=black@0:s=${w}x${h},${globeGridFilter}`,
+      '-filter_complex', '[0:v][1:v]overlay=0:0,format=rgb24[out]',
+      '-map', '[out]',
       '-frames:v', '1',
       outputPath,
     ]);
-    logger?.info?.({ outputPath }, 'gradient background baked (linear diagonal + visible grid)');
+    logger?.info?.({ outputPath }, 'background baked (gradient + globe grid)');
   } catch (e) {
-    logger?.warn?.({ err: e.message }, 'gradients lineal falla, intentando radial');
+    logger?.warn?.({ err: e.message }, 'globe grid falla, fallback a color + drawgrid');
+    // Fallback simple si geq es muy lento o falla
     try {
       await runFfmpeg([
         '-y',
         '-f', 'lavfi',
-        '-i', `gradients=size=${w}x${h}:c0=${cBright}:c1=${cDark}:type=radial:duration=1:rate=1`,
-        '-vf', gridFilter,
+        '-i', `gradients=size=${w}x${h}:c0=${cDark}:c1=${cBright}:x0=0:y0=0:x1=${w}:y1=${h}:type=linear:duration=1:rate=1`,
+        '-vf', 'drawgrid=width=80:height=80:thickness=2:color=0x6FA8DC',
         '-frames:v', '1',
         outputPath,
       ]);
-      logger?.info?.({ outputPath }, 'gradient background baked (radial fallback + grid)');
+      logger?.info?.({ outputPath }, 'background baked (gradient + simple grid fallback)');
     } catch (e2) {
-      logger?.warn?.({ err: e2.message }, 'gradients no disponible, color solido + grid');
+      logger?.warn?.({ err: e2.message }, 'gradients no disponible, color solido');
       await runFfmpeg([
         '-y',
         '-f', 'lavfi',
         '-i', `color=c=${cDark}:s=${w}x${h}`,
-        '-vf', gridFilter,
         '-frames:v', '1',
         outputPath,
       ]);
