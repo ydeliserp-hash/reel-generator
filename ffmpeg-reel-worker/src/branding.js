@@ -62,7 +62,7 @@ export const BRAND = {
     crf: 23,
     preset: 'ultrafast',
     audio_bitrate: '128k',
-    xfade_duration: 1.0,           // Transiciones cinematograficas (antes 0.5s)
+    xfade_duration: 1.5,           // Transicion cinematografica lenta
     xfade_transition: 'fade',
     // Numero maximo de segmentos pre-procesados en paralelo en fase 1.
     // Bajar este valor si el worker se queda sin RAM o CPU.
