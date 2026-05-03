@@ -29,40 +29,44 @@ export async function ensureGradientBackground(outputPath, logger) {
   // (ej. de 9:16 a 4:5), el PNG cacheado ya no sirve. La generacion es ~500ms.
   const w = BRAND.video.width;
   const h = BRAND.video.height;
-  const c0 = ffmpegColor(BRAND.colors.bg_mid);
-  const c1 = ffmpegColor(BRAND.colors.bg_dark);
+  // Para visibilidad real del gradiente, fuerzo contraste mayor que el de
+  // bg_dark/bg_mid (que son muy parecidos). Manteniendo paleta navy.
+  const cDark = '0x050E22';   // mucho mas oscuro que bg_dark (#0A1F3D)
+  const cBright = '0x3578D5'; // mucho mas brillante que bg_mid (#1B4F8C)
+  // Rejilla bien visible: lightblue 25% sobre navy + thickness 2px
+  const gridFilter = 'drawgrid=width=50:height=50:thickness=2:color=lightblue@0.22';
 
   try {
-    // Gradiente lineal en diagonal 45 grados (oscuro en 2 esquinas opuestas,
-    // mas claro en las otras 2) + rejilla gris sutil tipo UI medico/tech.
+    // Gradiente lineal diagonal (esquina top-left oscura, bottom-right clara)
+    // + rejilla azul claro visible tipo UI medico
     await runFfmpeg([
       '-y',
       '-f', 'lavfi',
-      '-i', `gradients=size=${w}x${h}:c0=${c1}:c1=${c0}:x0=0:y0=0:x1=${w}:y1=${h}:type=linear:duration=1:rate=1`,
-      '-vf', 'drawgrid=width=60:height=60:thickness=1:color=gray@0.10',
+      '-i', `gradients=size=${w}x${h}:c0=${cDark}:c1=${cBright}:x0=0:y0=0:x1=${w}:y1=${h}:type=linear:duration=1:rate=1`,
+      '-vf', gridFilter,
       '-frames:v', '1',
       outputPath,
     ]);
-    logger?.info?.({ outputPath }, 'gradient background baked (linear diagonal + grid)');
+    logger?.info?.({ outputPath }, 'gradient background baked (linear diagonal + visible grid)');
   } catch (e) {
-    logger?.warn?.({ err: e.message }, 'gradients filter falla, intentando radial');
+    logger?.warn?.({ err: e.message }, 'gradients lineal falla, intentando radial');
     try {
       await runFfmpeg([
         '-y',
         '-f', 'lavfi',
-        '-i', `gradients=size=${w}x${h}:c0=${c0}:c1=${c1}:type=radial:duration=1:rate=1`,
-        '-vf', 'drawgrid=width=60:height=60:thickness=1:color=gray@0.10',
+        '-i', `gradients=size=${w}x${h}:c0=${cBright}:c1=${cDark}:type=radial:duration=1:rate=1`,
+        '-vf', gridFilter,
         '-frames:v', '1',
         outputPath,
       ]);
       logger?.info?.({ outputPath }, 'gradient background baked (radial fallback + grid)');
     } catch (e2) {
-      logger?.warn?.({ err: e2.message }, 'gradients no disponible, color solido');
+      logger?.warn?.({ err: e2.message }, 'gradients no disponible, color solido + grid');
       await runFfmpeg([
         '-y',
         '-f', 'lavfi',
-        '-i', `color=c=${c1}:s=${w}x${h}`,
-        '-vf', 'drawgrid=width=60:height=60:thickness=1:color=gray@0.10',
+        '-i', `color=c=${cDark}:s=${w}x${h}`,
+        '-vf', gridFilter,
         '-frames:v', '1',
         outputPath,
       ]);
