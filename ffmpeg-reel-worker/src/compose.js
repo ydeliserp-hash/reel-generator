@@ -346,16 +346,17 @@ async function applyOverlays(
     ].join(':')
   );
 
-  // Capa 3 (opcional): badge titulo dorado los primeros N segundos.
-  // TODO: para esquinas redondeadas en el badge habria que renderizar un
-  // PNG con alpha y hacer overlay en lugar de drawbox. Pendiente fase 2.
+  // Capa 3 (opcional): badge titulo dorado.
+  // Por defecto se muestra DURANTE TODO el video. Si titleBadge.duration es
+  // un numero positivo, solo aparece esos segundos iniciales.
+  // TODO: esquinas redondeadas con PNG alpha pre-renderizado.
   if (titleBadge?.show && titleBadge.text) {
-    const dur = titleBadge.duration ?? BRAND.title_badge.duration_default;
+    const dur = typeof titleBadge.duration === 'number' && titleBadge.duration > 0
+      ? titleBadge.duration
+      : null; // null = siempre visible
     const fontSize = BRAND.title_badge.font_size;
     const padH = BRAND.title_badge.horizontal_padding;
     const padV = BRAND.title_badge.vertical_padding;
-    // Estimacion de ancho (FFmpeg no expone text_w en drawbox). El ratio
-    // 0.55 es una aproximacion para Montserrat Bold a este tamano.
     const approxBadgeWidth = Math.min(
       BRAND.video.width - 80,
       Math.round(titleBadge.text.length * fontSize * 0.55 + padH * 2)
@@ -363,20 +364,20 @@ async function applyOverlays(
     const approxBadgeHeight = fontSize + padV * 2;
     const badgeY = pctY(BRAND.positions.title_badge_y_pct);
     const badgeX = Math.round((BRAND.video.width - approxBadgeWidth) / 2);
+    const enableClause = dur ? `:enable='lt(t,${dur})'` : '';
     filters.push(
-      `drawbox=enable='lt(t,${dur})':x=${badgeX}:y=${badgeY}:w=${approxBadgeWidth}:h=${approxBadgeHeight}:color=${navyColor}:t=fill`
+      `drawbox=x=${badgeX}:y=${badgeY}:w=${approxBadgeWidth}:h=${approxBadgeHeight}:color=${navyColor}:t=fill${enableClause}`
     );
-    filters.push(
-      [
-        `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
-        `text='${escapeFilterSingleQuoted(titleBadge.text)}'`,
-        `fontsize=${fontSize}`,
-        `fontcolor=${goldColor}`,
-        'x=(w-text_w)/2',
-        `y=${badgeY + padV}`,
-        `enable='lt(t,${dur})'`,
-      ].join(':')
-    );
+    const drawtextParts = [
+      `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
+      `text='${escapeFilterSingleQuoted(titleBadge.text)}'`,
+      `fontsize=${fontSize}`,
+      `fontcolor=${goldColor}`,
+      'x=(w-text_w)/2',
+      `y=${badgeY + padV}`,
+    ];
+    if (dur) drawtextParts.push(`enable='lt(t,${dur})'`);
+    filters.push(drawtextParts.join(':'));
   }
 
   const vf = filters.join(',');
