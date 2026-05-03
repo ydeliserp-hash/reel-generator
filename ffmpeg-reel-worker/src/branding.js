@@ -28,13 +28,14 @@ export const BRAND = {
     file_signature: 'Montserrat-Bold.ttf',
   },
   // Posiciones expresadas como fraccion del eje vertical (1350 px de alto en 4:5).
-  // Calibradas para formato 1080x1350 (Instagram feed portrait).
+  // Layout NUEVO: badge titulo ARRIBA, asset en medio, subtitulos ABAJO,
+  // firma al pie.
   positions: {
-    subtitle_y_pct: 0.085,       // ~115 px desde arriba (margen V del subtitulo)
-    asset_top_pct: 0.18,         // ~243 px (linea superior del area de asset)
-    asset_bottom_pct: 0.85,      // ~1147 px (linea inferior del area de asset)
-    title_badge_y_pct: 0.18,     // ~243 px (debajo de los subtitulos)
-    signature_bar_y_pct: 0.945,  // centro vertical de la barra firma (~1275)
+    title_badge_y_pct: 0.04,           // ~54 px (titulo del reel arriba del todo)
+    asset_top_pct: 0.13,               // ~175 px (asset empieza debajo del badge)
+    asset_bottom_pct: 0.78,            // ~1053 px (asset acaba antes de los subtitulos)
+    subtitle_margin_v_bottom_pct: 0.10, // ~135 px desde abajo (subtitulo zona baja)
+    signature_bar_y_pct: 0.965,        // centro vertical de la barra firma (~1303)
   },
   subtitle: {
     font_size: 64,
@@ -62,7 +63,7 @@ export const BRAND = {
     crf: 21,                       // Mejor calidad (antes 23)
     preset: 'fast',                // Compresion ~70% mejor que ultrafast
     audio_bitrate: '128k',
-    xfade_duration: 1.5,           // Transicion cinematografica lenta
+    xfade_duration: 0.5,           // Transicion corta (era 1.5)
     xfade_transition: 'fade',
     // Numero maximo de segmentos pre-procesados en paralelo en fase 1.
     // Bajar este valor si el worker se queda sin RAM o CPU.

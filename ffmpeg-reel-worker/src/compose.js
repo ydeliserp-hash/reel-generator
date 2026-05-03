@@ -29,10 +29,13 @@ import { downloadToFile, extFromUrl } from './utils/download.js';
 import { probeDuration } from './utils/probe.js';
 
 // Coordenadas derivadas del branding (en px, sistema FFmpeg con origen arriba-izquierda).
-const ASSET_TOP_Y = pctY(BRAND.positions.asset_top_pct);                    // 346
-const ASSET_BOTTOM_Y = pctY(BRAND.positions.asset_bottom_pct);              // 1690
-const ASSET_AREA_HEIGHT = ASSET_BOTTOM_Y - ASSET_TOP_Y;                     // 1344
+const ASSET_TOP_Y = pctY(BRAND.positions.asset_top_pct);
+const ASSET_BOTTOM_Y = pctY(BRAND.positions.asset_bottom_pct);
+const ASSET_AREA_HEIGHT = ASSET_BOTTOM_Y - ASSET_TOP_Y;
 const SIG_BAR_Y = pctY(BRAND.positions.signature_bar_y_pct) - Math.floor(BRAND.signature.bar_height / 2);
+
+// Path al PNG de fondo navy degradado (lo hornea utils/background.js al arranque).
+const BG_GRADIENT_PATH = path.join(process.env.ASSETS_DIR || '/app/assets', 'overlays', 'bg_gradient.png');
 
 /**
  * Ejecuta ffmpeg con los args dados. Resuelve con stderr al exit 0,
@@ -171,22 +174,26 @@ async function buildImageSegment(
     cropY = `${dy}*t/${dur}`;
   }
 
-  // Pad directo al canvas (centra horizontalmente, vertical en ASSET_TOP_Y)
-  // para evitar problemas de redondeo con doble pad.
-  const filter = [
+  // Filter complex: bg_gradient como base, asset con Ken Burns superpuesto
+  // en el area de asset (centrado horizontal, en ASSET_TOP_Y vertical).
+  const assetFilter = [
     `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
     `crop=${scaledW}:${scaledH}`,
     `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
-    `pad=${W}:${H}:(${W}-iw)/2:${ASSET_TOP_Y}+(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
-    `fps=${fps}`,
-    'format=yuv420p',
   ].join(',');
+  const filterComplex = [
+    `[0:v]scale=${W}:${H}[bg]`,
+    `[1:v]${assetFilter}[asset]`,
+    `[bg][asset]overlay=(W-overlay_w)/2:${ASSET_TOP_Y}+(${ASSET_AREA_HEIGHT}-overlay_h)/2[v]`,
+    `[v]fps=${fps},format=yuv420p[vout]`,
+  ].join(';');
 
   const args = [
     '-y',
-    '-loop', '1',
-    '-i', assetPath,
-    '-vf', filter,
+    '-loop', '1', '-i', BG_GRADIENT_PATH,
+    '-loop', '1', '-i', assetPath,
+    '-filter_complex', filterComplex,
+    '-map', '[vout]',
     '-t', duration.toString(),
     '-r', fps.toString(),
     '-c:v', 'libx264',
@@ -212,29 +219,26 @@ async function buildVideoSegment(
   const W = BRAND.video.width;
   const H = BRAND.video.height;
 
-  // Filtro robusto en un solo pad: escalo para caber en el area de asset
-  // (con margen de 2 px para absorber redondeo de ffmpeg) y luego pad
-  // directamente al canvas completo centrando horizontalmente y posicionando
-  // verticalmente en ASSET_TOP_Y. Evita el bug de "padded smaller than input"
-  // cuando scale produce dims inesperadas por aspect ratios extremos.
+  // Filter complex: bg_gradient como base, video escalado superpuesto en asset_area.
   const safeAreaW = W - 2;
   const safeAreaH = ASSET_AREA_HEIGHT - 2;
-  const filter = [
-    `scale=${safeAreaW}:${safeAreaH}:force_original_aspect_ratio=decrease`,
-    // Pad directo al canvas completo. El asset queda centrado horizontalmente
-    // dentro del ancho W, y posicionado verticalmente al inicio del area de asset.
-    `pad=${W}:${H}:(${W}-iw)/2:${ASSET_TOP_Y}+(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
-    `fps=${fps}`,
-    'format=yuv420p',
-  ].join(',');
+  const assetFilter = `scale=${safeAreaW}:${safeAreaH}:force_original_aspect_ratio=decrease`;
+  const filterComplex = [
+    `[0:v]scale=${W}:${H}[bg]`,
+    `[1:v]${assetFilter}[asset]`,
+    `[bg][asset]overlay=(W-overlay_w)/2:${ASSET_TOP_Y}+(${ASSET_AREA_HEIGHT}-overlay_h)/2[v]`,
+    `[v]fps=${fps},format=yuv420p[vout]`,
+  ].join(';');
 
   const args = [
     '-y',
-    '-stream_loop', '-1',           // loop infinito; -t corta a la duracion deseada
+    '-loop', '1', '-i', BG_GRADIENT_PATH,    // input 0: bg gradient
+    '-stream_loop', '-1',                     // loop input 1 (video)
     '-ss', trimStart.toString(),
-    '-i', assetPath,
+    '-i', assetPath,                          // input 1: video asset
+    '-filter_complex', filterComplex,
+    '-map', '[vout]',
     '-t', duration.toString(),
-    '-vf', filter,
     '-r', fps.toString(),
     '-c:v', 'libx264',
     '-preset', 'fast',

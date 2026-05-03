@@ -115,9 +115,9 @@ export function buildAssContent(segments) {
   const primary = assColor(BRAND.colors.text_primary);
   const outline = assColor(BRAND.colors.text_outline);
   const back = assColor('#000000');
-  // MarginV en ASS, con Alignment 8 (top center), es la distancia desde
-  // el borde superior al limite superior del texto.
-  const marginV = pctY(BRAND.positions.subtitle_y_pct);
+  // MarginV en ASS, con Alignment 2 (bottom center), es la distancia desde
+  // el borde INFERIOR al limite inferior del texto.
+  const marginV = pctY(BRAND.positions.subtitle_margin_v_bottom_pct);
 
   const header = [
     '[Script Info]',
@@ -133,8 +133,8 @@ export function buildAssContent(segments) {
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     // Bold = -1 (true en ASS). BorderStyle = 1 (outline + shadow).
-    // Alignment 8 = top center. Encoding 1 = default.
-    `Style: Default,${fontName},${fontSize},${primary},&H000000FF,${outline},${back},-1,0,0,0,100,100,0,0,1,${BRAND.subtitle.outline_width},${BRAND.subtitle.shadow_offset},8,40,40,${marginV},1`,
+    // Alignment 2 = bottom center. Encoding 1 = default.
+    `Style: Default,${fontName},${fontSize},${primary},&H000000FF,${outline},${back},-1,0,0,0,100,100,0,0,1,${BRAND.subtitle.outline_width},${BRAND.subtitle.shadow_offset},2,40,40,${marginV},1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',

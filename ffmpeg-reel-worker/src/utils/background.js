@@ -25,13 +25,8 @@ function runFfmpeg(args) {
 }
 
 export async function ensureGradientBackground(outputPath, logger) {
-  try {
-    await stat(outputPath);
-    return outputPath;
-  } catch {
-    /* el fichero no existe, lo generamos */
-  }
-
+  // SIEMPRE regenerar al arranque: si las dimensiones del branding cambiaron
+  // (ej. de 9:16 a 4:5), el PNG cacheado ya no sirve. La generacion es ~500ms.
   const w = BRAND.video.width;
   const h = BRAND.video.height;
   const c0 = ffmpegColor(BRAND.colors.bg_mid);
