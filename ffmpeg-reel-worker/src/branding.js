@@ -59,8 +59,8 @@ export const BRAND = {
     width: 1080,
     height: 1350,                  // Formato 4:5 (Instagram feed portrait)
     fps: 30,
-    crf: 23,
-    preset: 'ultrafast',
+    crf: 21,                       // Mejor calidad (antes 23)
+    preset: 'fast',                // Compresion ~70% mejor que ultrafast
     audio_bitrate: '128k',
     xfade_duration: 1.5,           // Transicion cinematografica lenta
     xfade_transition: 'fade',

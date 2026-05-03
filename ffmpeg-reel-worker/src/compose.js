@@ -190,8 +190,8 @@ async function buildImageSegment(
     '-t', duration.toString(),
     '-r', fps.toString(),
     '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-crf', '23',
+    '-preset', 'fast',
+    '-crf', '21',
     '-an',
     outputPath,
   ];
@@ -237,8 +237,8 @@ async function buildVideoSegment(
     '-vf', filter,
     '-r', fps.toString(),
     '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-crf', '23',
+    '-preset', 'fast',
+    '-crf', '21',
     '-an',
     outputPath,
   ];
@@ -286,8 +286,8 @@ async function concatenateWithXfade(
     '-filter_complex', filters.join(';'),
     '-map', '[vout]',
     '-c:v', 'libx264',
-    '-preset', 'medium',
-    '-crf', '20',
+    '-preset', 'fast',
+    '-crf', '21',
     '-an',
     outputPath,
   ];
