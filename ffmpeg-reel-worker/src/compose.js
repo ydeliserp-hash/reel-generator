@@ -392,7 +392,9 @@ async function applyOverlays(
     '-r', BRAND.video.fps.toString(),
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
-    '-shortest',
+    // Sin -shortest: el output dura lo del stream mas largo. Asi el audio
+    // siempre se reproduce hasta el final, aunque el video acabe antes
+    // (en cuyo caso se queda en frame congelado el ultimo instante).
     outputPath,
   ];
   await runFfmpeg(args, logger);
@@ -492,10 +494,13 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // dura exactamente lo mismo que el audio.
   if (audioDurationProbed && audioDurations.length > 0) {
     const sumSeg = audioDurations.reduce((a, b) => a + b, 0);
-    if (audioDurationProbed > sumSeg + 0.05) {
-      const extra = audioDurationProbed - sumSeg;
+    // Anadir margen extra de 0.5s al final para asegurar que el audio se
+    // reproduce completo (incluido cualquier silencio o respiracion final).
+    const targetTotal = audioDurationProbed + 0.5;
+    if (targetTotal > sumSeg) {
+      const extra = targetTotal - sumSeg;
       audioDurations[audioDurations.length - 1] += extra;
-      logger?.info?.({ extra, sumSegBefore: sumSeg, audioDurationProbed }, 'extended last segment to cover trailing audio');
+      logger?.info?.({ extra, sumSegBefore: sumSeg, audioDurationProbed, targetTotal }, 'extended last segment to cover trailing audio');
     }
   }
 
