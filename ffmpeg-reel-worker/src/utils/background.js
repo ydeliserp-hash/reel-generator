@@ -33,23 +33,40 @@ export async function ensureGradientBackground(outputPath, logger) {
   const c1 = ffmpegColor(BRAND.colors.bg_dark);
 
   try {
+    // Gradiente lineal en diagonal 45 grados (oscuro en 2 esquinas opuestas,
+    // mas claro en las otras 2) + rejilla gris sutil tipo UI medico/tech.
     await runFfmpeg([
       '-y',
       '-f', 'lavfi',
-      '-i', `gradients=size=${w}x${h}:c0=${c0}:c1=${c1}:type=radial:duration=1:rate=1`,
+      '-i', `gradients=size=${w}x${h}:c0=${c1}:c1=${c0}:x0=0:y0=0:x1=${w}:y1=${h}:type=linear:duration=1:rate=1`,
+      '-vf', 'drawgrid=width=60:height=60:thickness=1:color=gray@0.10',
       '-frames:v', '1',
       outputPath,
     ]);
-    logger?.info?.({ outputPath }, 'gradient background baked');
+    logger?.info?.({ outputPath }, 'gradient background baked (linear diagonal + grid)');
   } catch (e) {
-    logger?.warn?.({ err: e.message }, 'gradients filter unavailable, falling back to solid color');
-    await runFfmpeg([
-      '-y',
-      '-f', 'lavfi',
-      '-i', `color=c=${c1}:s=${w}x${h}`,
-      '-frames:v', '1',
-      outputPath,
-    ]);
+    logger?.warn?.({ err: e.message }, 'gradients filter falla, intentando radial');
+    try {
+      await runFfmpeg([
+        '-y',
+        '-f', 'lavfi',
+        '-i', `gradients=size=${w}x${h}:c0=${c0}:c1=${c1}:type=radial:duration=1:rate=1`,
+        '-vf', 'drawgrid=width=60:height=60:thickness=1:color=gray@0.10',
+        '-frames:v', '1',
+        outputPath,
+      ]);
+      logger?.info?.({ outputPath }, 'gradient background baked (radial fallback + grid)');
+    } catch (e2) {
+      logger?.warn?.({ err: e2.message }, 'gradients no disponible, color solido');
+      await runFfmpeg([
+        '-y',
+        '-f', 'lavfi',
+        '-i', `color=c=${c1}:s=${w}x${h}`,
+        '-vf', 'drawgrid=width=60:height=60:thickness=1:color=gray@0.10',
+        '-frames:v', '1',
+        outputPath,
+      ]);
+    }
   }
   return outputPath;
 }
