@@ -431,23 +431,33 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     ? copyFile(audioFilePath, audioPath)
     : downloadToFile(spec.audio_url, audioPath);
 
+  // Audio en paralelo a las descargas de assets
+  // Assets se descargan con concurrencia limitada para no saturar Pollinations.ai
+  // (que devuelve 429 si pides muchas imagenes simultaneas).
+  const downloadConcurrency = 2;
+  const downloadTasks = spec.segments.map((seg, i) => async () => {
+    if (assetFilePaths[i]) {
+      const ext = path.extname(assetFilePaths[i]) || (seg.asset.type === 'image' ? '.jpg' : '.mp4');
+      const dest = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
+      await copyFile(assetFilePaths[i], dest);
+      seg._localPath = dest;
+      return;
+    }
+    const ext = extFromUrl(seg.asset.url, seg.asset.type === 'image' ? '.jpg' : '.mp4');
+    const assetPath = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
+    // Para Pollinations cada peticion genera la imagen al vuelo (puede tardar).
+    // Timeout mas largo y mas reintentos.
+    const isPollinations = seg.asset.url?.includes('pollinations.ai');
+    await downloadToFile(seg.asset.url, assetPath, {
+      timeoutMs: isPollinations ? 120000 : 60000,
+      maxRetries: isPollinations ? 5 : 3,
+    });
+    seg._localPath = assetPath;
+  });
+
   await Promise.all([
     audioTask,
-    ...spec.segments.map(async (seg, i) => {
-      // Si el caller proporciono un fichero local para este asset, usarlo;
-      // de lo contrario, descargar la URL del spec.
-      if (assetFilePaths[i]) {
-        const ext = path.extname(assetFilePaths[i]) || (seg.asset.type === 'image' ? '.jpg' : '.mp4');
-        const dest = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
-        await copyFile(assetFilePaths[i], dest);
-        seg._localPath = dest;
-        return;
-      }
-      const ext = extFromUrl(seg.asset.url, seg.asset.type === 'image' ? '.jpg' : '.mp4');
-      const assetPath = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
-      await downloadToFile(seg.asset.url, assetPath);
-      seg._localPath = assetPath;
-    }),
+    runWithConcurrency(downloadTasks, downloadConcurrency),
   ]);
 
   const audioDurationProbed = await probeDuration(audioPath).catch(() => null);
