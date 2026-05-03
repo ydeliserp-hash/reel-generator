@@ -445,14 +445,34 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     }
     const ext = extFromUrl(seg.asset.url, seg.asset.type === 'image' ? '.jpg' : '.mp4');
     const assetPath = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
-    // Para Pollinations cada peticion genera la imagen al vuelo (puede tardar).
-    // Timeout mas largo y mas reintentos.
     const isPollinations = seg.asset.url?.includes('pollinations.ai');
-    await downloadToFile(seg.asset.url, assetPath, {
-      timeoutMs: isPollinations ? 120000 : 60000,
-      maxRetries: isPollinations ? 5 : 3,
-    });
-    seg._localPath = assetPath;
+    // Intento primario con timeout y reintentos diferenciados
+    try {
+      await downloadToFile(seg.asset.url, assetPath, {
+        timeoutMs: isPollinations ? 120000 : 60000,
+        maxRetries: isPollinations ? 4 : 3,
+      });
+      seg._localPath = assetPath;
+      return;
+    } catch (errPrimary) {
+      // Fallback: si la primaria fallo y hay url_fallback (Pexels), intentamos con esa
+      if (seg.asset.url_fallback) {
+        logger?.warn?.({
+          idx: i,
+          primary: seg.asset.url?.slice(0, 100),
+          err: errPrimary.message?.slice(0, 200),
+        }, 'primary asset failed, trying fallback');
+        const extFb = extFromUrl(seg.asset.url_fallback, '.jpg');
+        const assetPathFb = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}_fb${extFb}`);
+        await downloadToFile(seg.asset.url_fallback, assetPathFb, {
+          timeoutMs: 60000,
+          maxRetries: 3,
+        });
+        seg._localPath = assetPathFb;
+        return;
+      }
+      throw errPrimary;
+    }
   });
 
   await Promise.all([
