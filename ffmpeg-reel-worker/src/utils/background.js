@@ -33,8 +33,10 @@ export async function ensureGradientBackground(outputPath, logger) {
   // bg_dark/bg_mid (que son muy parecidos). Manteniendo paleta navy.
   const cDark = '0x050E22';   // mucho mas oscuro que bg_dark (#0A1F3D)
   const cBright = '0x3578D5'; // mucho mas brillante que bg_mid (#1B4F8C)
-  // Rejilla bien visible: lightblue 25% sobre navy + thickness 2px
-  const gridFilter = 'drawgrid=width=50:height=50:thickness=2:color=lightblue@0.22';
+  // Rejilla bien VISIBLE: color azul claro fuerte (sin alpha para garantizar
+  // que se vea sobre el degradado), 2px, espaciado 80px (lineas mas separadas
+  // para no saturar). Si sigue sin verse, subir a 3-4px.
+  const gridFilter = 'drawgrid=width=80:height=80:thickness=2:color=0x6FA8DC';
 
   try {
     // Gradiente lineal diagonal (esquina top-left oscura, bottom-right clara)
