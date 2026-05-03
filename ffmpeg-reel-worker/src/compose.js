@@ -171,11 +171,13 @@ async function buildImageSegment(
     cropY = `${dy}*t/${dur}`;
   }
 
+  // Pad directo al canvas (centra horizontalmente, vertical en ASSET_TOP_Y)
+  // para evitar problemas de redondeo con doble pad.
   const filter = [
     `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
     `crop=${scaledW}:${scaledH}`,
     `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
-    `pad=${W}:${H}:0:${ASSET_TOP_Y}:color=${padColor}`,
+    `pad=${W}:${H}:(${W}-iw)/2:${ASSET_TOP_Y}+(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
     `fps=${fps}`,
     'format=yuv420p',
   ].join(',');
@@ -210,10 +212,18 @@ async function buildVideoSegment(
   const W = BRAND.video.width;
   const H = BRAND.video.height;
 
+  // Filtro robusto en un solo pad: escalo para caber en el area de asset
+  // (con margen de 2 px para absorber redondeo de ffmpeg) y luego pad
+  // directamente al canvas completo centrando horizontalmente y posicionando
+  // verticalmente en ASSET_TOP_Y. Evita el bug de "padded smaller than input"
+  // cuando scale produce dims inesperadas por aspect ratios extremos.
+  const safeAreaW = W - 2;
+  const safeAreaH = ASSET_AREA_HEIGHT - 2;
   const filter = [
-    `scale=${W}:${ASSET_AREA_HEIGHT}:force_original_aspect_ratio=decrease`,
-    `pad=${W}:${ASSET_AREA_HEIGHT}:(${W}-iw)/2:(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
-    `pad=${W}:${H}:0:${ASSET_TOP_Y}:color=${padColor}`,
+    `scale=${safeAreaW}:${safeAreaH}:force_original_aspect_ratio=decrease`,
+    // Pad directo al canvas completo. El asset queda centrado horizontalmente
+    // dentro del ancho W, y posicionado verticalmente al inicio del area de asset.
+    `pad=${W}:${H}:(${W}-iw)/2:${ASSET_TOP_Y}+(${ASSET_AREA_HEIGHT}-ih)/2:color=${padColor}`,
     `fps=${fps}`,
     'format=yuv420p',
   ].join(',');
