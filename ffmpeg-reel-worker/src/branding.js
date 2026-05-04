@@ -62,7 +62,8 @@ export const BRAND = {
   // navy semitransparente como difuminado de fondo, logo PNG centrado encima
   // y frase cursiva con fade-in por opacidad.
   outro: {
-    enabled: true,                        // siempre activo en todos los reels
+    // Se puede desactivar en runtime con OUTRO_ENABLED=false (sin redeploy de codigo).
+    enabled: process.env.OUTRO_ENABLED !== 'false',
     duration: 3.0,                        // segundos finales con outro visible
     fade_in_duration: 1.0,                // segundos de fade-in del texto
     logo_file: 'logo_firma.png',          // en assets/overlays/
