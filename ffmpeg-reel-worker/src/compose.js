@@ -38,13 +38,32 @@ const SIG_BAR_Y = pctY(BRAND.positions.signature_bar_y_pct) - Math.floor(BRAND.s
 // Path al PNG de fondo navy degradado (lo hornea utils/background.js al arranque).
 const BG_GRADIENT_PATH = path.join(process.env.ASSETS_DIR || '/app/assets', 'overlays', 'bg_gradient.png');
 
-// Cache de patterns disponibles para rotar (descubierto al primer compose).
+// Cache de patterns disponibles (descubierto al primer compose).
 let _bgPatternsCache = null;
-async function getBgForSegment(segIndex) {
+async function loadBgPatterns() {
   if (_bgPatternsCache === null) {
     _bgPatternsCache = await listBackgroundPatterns(BG_GRADIENT_PATH);
   }
-  return _bgPatternsCache[segIndex % _bgPatternsCache.length];
+  return _bgPatternsCache;
+}
+
+/**
+ * Elige UN pattern por sesion (todos los segmentos del reel comparten el
+ * mismo fondo). El hash del sessionDir/sessionKey hace que reels distintos
+ * obtengan fondos distintos pero el mismo reel sea consistente.
+ */
+function hashString(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h) + str.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h);
+}
+async function pickBgForSession(sessionKey) {
+  const patterns = await loadBgPatterns();
+  if (patterns.length === 0) return BG_GRADIENT_PATH;
+  return patterns[hashString(sessionKey) % patterns.length];
 }
 
 /**
@@ -238,10 +257,9 @@ function kenBurnsExpr(segIndex, durationFrames, hint) {
  * Fase 1: pre-procesa una imagen estatica con Ken Burns sutil.
  */
 async function buildImageSegment(
-  { assetPath, duration, outputPath, segIndex, kenBurnsHint },
+  { assetPath, duration, outputPath, segIndex, kenBurnsHint, bgPath },
   logger
 ) {
-  const bgPath = await getBgForSegment(segIndex);
   const fps = BRAND.video.fps;
   const frames = Math.max(Math.round(duration * fps), 1);
   const kb = kenBurnsExpr(segIndex, frames, kenBurnsHint);
@@ -320,10 +338,9 @@ async function buildImageSegment(
  * de `trimStart`. Si el video original es mas corto, hace loop.
  */
 async function buildVideoSegment(
-  { assetPath, duration, trimStart = 0, outputPath, segIndex = 0 },
+  { assetPath, duration, trimStart = 0, outputPath, segIndex = 0, bgPath },
   logger
 ) {
-  const bgPath = await getBgForSegment(segIndex);
   const fps = BRAND.video.fps;
   const padColor = ffmpegColor(BRAND.colors.bg_dark);
   const W = BRAND.video.width;
@@ -342,7 +359,7 @@ async function buildVideoSegment(
 
   const args = [
     '-y',
-    '-loop', '1', '-i', BG_GRADIENT_PATH,    // input 0: bg gradient
+    '-loop', '1', '-i', bgPath,               // input 0: bg gradient (1 por sesion)
     '-stream_loop', '-1',                     // loop input 1 (video)
     '-ss', trimStart.toString(),
     '-i', assetPath,                          // input 1: video asset
@@ -644,6 +661,10 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // Paso 1: pre-procesar segmentos con paralelismo limitado.
   // Saturar la CPU con N ffmpeg simultaneos en un VPS pequeno provoca
   // timeouts y OOMs. max_parallel_segments controla el lote.
+  // Un solo bgPath por sesion: todos los segmentos del reel comparten fondo
+  // (consistencia visual). Reels distintos obtienen fondos distintos via hash.
+  const sessionBgPath = await pickBgForSession(path.basename(sessionDir));
+  logger?.info?.({ sessionBgPath }, 'session background pattern picked');
   const maxParallel = BRAND.video.max_parallel_segments || 2;
   logger?.info?.({ count: spec.segments.length, maxParallel }, 'starting phase 1: per-segment render');
   const segmentTasks = spec.segments.map((seg, i) => async () => {
@@ -660,6 +681,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
             outputPath: segOut,
             segIndex: i,
             kenBurnsHint: seg.asset.ken_burns,
+            bgPath: sessionBgPath,
           },
           logger
         );
@@ -671,6 +693,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
             trimStart: seg.asset.trim_start ?? 0,
             outputPath: segOut,
             segIndex: i,
+            bgPath: sessionBgPath,
           },
           logger
         );
