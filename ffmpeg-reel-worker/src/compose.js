@@ -576,9 +576,11 @@ async function applyOverlays(
   if (outroEnabled) {
     const logoW = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
     const logoY = pctY(BRAND.outro.logo_y_pct);
+    // Input 0 = video, input 1 = audio, input 2 = logo PNG. El audio no tiene
+    // stream de video, asi que el logo se referencia como [2:v].
     filterComplex = [
       `[0:v]${vf}[base]`,
-      `[1:v]scale=${logoW}:-1[logo]`,
+      `[2:v]scale=${logoW}:-1[logo]`,
       `[base][logo]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
     ].join(';');
   } else {
