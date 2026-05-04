@@ -48,63 +48,96 @@ async function getBgForSegment(segIndex) {
 }
 
 /**
- * Genera una imagen con Imagen 3 (Google AI Studio) y la guarda en destPath.
- * Devuelve destPath si OK, o lanza Error si falla (autenticacion, cuota, etc).
+ * Genera una imagen con Google AI Studio. Prueba varios modelos en orden
+ * porque la disponibilidad de Imagen via AI Studio cambia y depende de la
+ * cuenta/region. Devuelve destPath si OK, o lanza Error agregado si todos
+ * fallan.
+ *
+ * Soporta dos tipos de endpoint:
+ *  - generateContent (Gemini 2.0/2.5 Flash con image generation)
+ *  - predict (Imagen via AI Studio o Vertex)
  */
 async function generateImageWithGemini(prompt, destPath, logger) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY no configurado en el worker');
 
-  // Imagen 3 endpoint via Google AI Studio
-  const model = process.env.GEMINI_IMAGEN_MODEL || 'imagen-3.0-generate-002';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${apiKey}`;
+  // Lista de modelos candidatos en orden de preferencia.
+  // Se puede sobrescribir con env GEMINI_IMAGEN_MODEL.
+  const candidates = [
+    process.env.GEMINI_IMAGEN_MODEL,
+    'gemini-2.5-flash-image-preview',
+    'gemini-2.0-flash-exp',
+    'imagen-3.0-fast-generate-001',
+    'imagen-3.0-generate-001',
+    'imagen-3.0-generate-002',
+  ].filter(Boolean);
 
-  const body = {
-    instances: [{ prompt }],
-    parameters: {
-      sampleCount: 1,
-      aspectRatio: '3:4',          // portrait, mas cercano al canvas 4:5
-      personGeneration: 'allow_adult',
-    },
-  };
+  const errors = [];
+  for (const model of candidates) {
+    const isImagenPredict = model.startsWith('imagen-');
+    const method = isImagenPredict ? 'predict' : 'generateContent';
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:${method}?key=${apiKey}`;
 
-  const t0 = Date.now();
-  let res;
-  try {
-    res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } catch (e) {
-    throw new Error(`gemini fetch error: ${e.message}`);
+    let body;
+    if (isImagenPredict) {
+      body = {
+        instances: [{ prompt }],
+        parameters: { sampleCount: 1, aspectRatio: '3:4', personGeneration: 'allow_adult' },
+      };
+    } else {
+      // Gemini 2.x con image generation: usa generateContent con responseModalities
+      body = {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { responseModalities: ['IMAGE'] },
+      };
+    }
+
+    const t0 = Date.now();
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        errors.push(`${model}:${res.status}:${text.slice(0, 100)}`);
+        continue;
+      }
+
+      const data = await res.json();
+
+      // Extraer base64 segun el formato de respuesta del modelo
+      let b64;
+      if (isImagenPredict) {
+        b64 = data?.predictions?.[0]?.bytesBase64Encoded;
+      } else {
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const imgPart = parts.find((p) => p.inlineData?.data || p.inline_data?.data);
+        b64 = imgPart?.inlineData?.data || imgPart?.inline_data?.data;
+      }
+
+      if (!b64) {
+        errors.push(`${model}:no-image:${JSON.stringify(data).slice(0, 100)}`);
+        continue;
+      }
+
+      const buffer = Buffer.from(b64, 'base64');
+      if (buffer.length < 1000) {
+        errors.push(`${model}:tiny:${buffer.length}`);
+        continue;
+      }
+
+      await writeFile(destPath, buffer);
+      logger?.info?.({ destPath, model, bytes: buffer.length, elapsedMs: Date.now() - t0 }, 'gemini image generated');
+      return destPath;
+    } catch (e) {
+      errors.push(`${model}:exception:${e.message?.slice(0, 100)}`);
+    }
   }
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`gemini ${res.status}: ${text.slice(0, 400)}`);
-  }
-
-  let data;
-  try {
-    data = await res.json();
-  } catch (e) {
-    throw new Error('gemini bad JSON response');
-  }
-
-  const b64 = data?.predictions?.[0]?.bytesBase64Encoded;
-  if (!b64) {
-    throw new Error('gemini response sin bytesBase64Encoded: ' + JSON.stringify(data).slice(0, 300));
-  }
-
-  const buffer = Buffer.from(b64, 'base64');
-  if (buffer.length < 1000) {
-    throw new Error('gemini buffer demasiado pequeno: ' + buffer.length);
-  }
-
-  await writeFile(destPath, buffer);
-  logger?.info?.({ destPath, bytes: buffer.length, elapsedMs: Date.now() - t0 }, 'gemini image generated');
-  return destPath;
+  throw new Error(`gemini todos los modelos fallaron: ${errors.join(' | ')}`);
 }
 
 /**
