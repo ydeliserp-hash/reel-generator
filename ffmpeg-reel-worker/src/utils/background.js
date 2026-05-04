@@ -185,6 +185,73 @@ export async function ensureGradientBackground(outputPath, logger) {
 }
 
 /**
+ * Pre-renderiza el outro completo como UN SOLO PNG de WxH (mismo tamano que
+ * el video final). Combina backdrop navy semitransparente + logo redimensionado
+ * + frase cursiva en una sola capa. Asi applyOverlays solo necesita UN
+ * filtro `overlay` con `enable=` en vez de cuatro filtros distintos
+ * (drawbox + drawtext + scale + overlay), lo que reduce drasticamente el
+ * tiempo de procesamiento del filter graph.
+ *
+ * Devuelve el path del PNG generado, o null si falla.
+ */
+export async function ensureOutroOverlay(params, logger) {
+  const {
+    outputPath, videoW, videoH, originalLogoPath, fontFile,
+    logoWidth, logoY, phraseText, phraseFontSize, phraseColor, phraseY,
+    backdropColor, backdropAlpha, backdropPadding,
+  } = params;
+
+  // Construir filtro: empezamos con un fondo transparente WxH, dibujamos
+  // el backdrop navy semitransparente, escalamos el logo y lo overlayeamos,
+  // y dibujamos el texto cursivo.
+  const backdropTop = Math.max(0, logoY - backdropPadding);
+  // No conocemos el alto exacto del logo escalado hasta runtime; aproximamos
+  // con un alto generoso (logoWidth * 0.6 = aspect ~5:3 que es lo del logo
+  // original). Luego phrase y backdrop padding inferior.
+  const approxLogoHeight = Math.round(logoWidth * 0.55);
+  const backdropBottom = Math.min(videoH, phraseY + phraseFontSize + backdropPadding);
+  const backdropX = backdropPadding;
+  const backdropW = videoW - 2 * backdropPadding;
+  const backdropH = backdropBottom - backdropTop;
+  const navyAlpha = `${backdropColor.replace('#', '0x').toUpperCase()}@${backdropAlpha}`;
+  const textColor = phraseColor.replace('#', '0x').toUpperCase();
+  const fontFilePosix = fontFile.replace(/\\/g, '/');
+  const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  const filter = [
+    // Fondo transparente del tamano del video
+    `color=c=black@0:s=${videoW}x${videoH}:r=1:d=1[bg]`,
+    // Logo escalado
+    `[1:v]scale=${logoWidth}:-1[logo]`,
+    // Sobre el bg, drawbox del backdrop navy
+    `[bg]drawbox=x=${backdropX}:y=${backdropTop}:w=${backdropW}:h=${backdropH}:color=${navyAlpha}:t=fill,format=rgba[withbox]`,
+    // Overlay del logo
+    `[withbox][logo]overlay=x=(W-w)/2:y=${logoY}[withlogo]`,
+    // Drawtext de la frase
+    `[withlogo]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=${phraseY}[out]`,
+  ].join(';');
+
+  try {
+    await runFfmpeg([
+      '-y',
+      '-f', 'lavfi',
+      '-i', `color=c=black@0:s=${videoW}x${videoH}:r=1:d=1`,
+      '-i', originalLogoPath,
+      '-filter_complex', filter,
+      '-map', '[out]',
+      '-frames:v', '1',
+      outputPath,
+    ]);
+    const s = await stat(outputPath);
+    logger?.info?.({ outputPath, bytes: s.size, videoW, videoH }, 'outro overlay PNG pre-rendered');
+    return outputPath;
+  } catch (e) {
+    logger?.warn?.({ err: e.message }, 'outro overlay pre-render failed, fallback al overlay multi-filtro en runtime');
+    return null;
+  }
+}
+
+/**
  * Pre-redimensiona el logo del outro a su tamano final (594 px de ancho)
  * UNA SOLA VEZ al arrancar el worker. Asi FFmpeg no tiene que decodificar
  * el PNG original (~2870x1472, ~5MB) ni reescalarlo cada frame del video.

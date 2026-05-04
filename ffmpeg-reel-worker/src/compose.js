@@ -531,83 +531,38 @@ async function applyOverlays(
     filters.push(drawtextParts.join(':'));
   }
 
-  // Capa 4 (outro): caja navy semitransparente como difuminado de fondo +
-  // frase cursiva con fade-in alpha. El logo se aplica como overlay aparte
-  // (fuera de la cadena `vf` porque overlay necesita 2 streams).
-  if (outroEnabled) {
-    const o = BRAND.outro;
-    const navyAlpha = ffmpegColorAlpha(o.backdrop_color, o.backdrop_alpha);
-    const phraseColor = ffmpegColor(o.phrase_color);
-    // Backdrop: cubre desde encima del logo hasta debajo de la frase.
-    const logoY = pctY(o.logo_y_pct);
-    const phraseY = pctY(o.phrase_y_pct);
-    const backdropTop = Math.max(0, logoY - o.backdrop_padding);
-    const backdropBottom = Math.min(BRAND.video.height, phraseY + o.phrase_font_size + o.backdrop_padding);
-    const backdropX = o.backdrop_padding;
-    const backdropW = BRAND.video.width - 2 * o.backdrop_padding;
-    const backdropH = backdropBottom - backdropTop;
-    filters.push(
-      `drawbox=x=${backdropX}:y=${backdropTop}:w=${backdropW}:h=${backdropH}:color=${navyAlpha}:t=fill:enable='gte(t,${outroStart.toFixed(3)})'`
-    );
-    // Frase cursiva con fade-in alpha (0 antes de outroStart, ramp 0→1 entre
-    // outroStart y fadeEnd, 1 despues).
-    const aExpr = `if(lt(t,${outroStart.toFixed(3)}),0,if(lt(t,${fadeEnd.toFixed(3)}),(t-${outroStart.toFixed(3)})/${o.fade_in_duration},1))`;
-    filters.push(
-      [
-        `drawtext=fontfile='${escapeFilterSingleQuoted(cursiveFontFile)}'`,
-        `text='${escapeFilterSingleQuoted(o.phrase_text)}'`,
-        `fontsize=${o.phrase_font_size}`,
-        `fontcolor=${phraseColor}`,
-        'x=(w-text_w)/2',
-        `y=${phraseY}`,
-        `alpha='${aExpr}'`,
-      ].join(':')
-    );
-  }
-
   const vf = filters.join(',');
 
-  // Si hay outro, anadimos el logo PNG como segundo input y lo overlayeamos
-  // tras la cadena de filtros del video principal.
-  // Preferimos el PNG redimensionado por bootstrap (594 px ancho, ~50 KB)
-  // sobre el original (~5 MB, 2870 px). Si no existe, fallback al original.
-  let logoPath = null;
+  // Outro: si bootstrap pre-renderizo outro_complete.png (PNG WxH con
+  // backdrop + logo + frase ya combinados), aplicamos UN SOLO overlay con
+  // enable=. Mucho mas rapido que 4 filtros separados (drawbox + drawtext +
+  // scale + overlay), que es el cuello de botella confirmado en VPS.
+  let outroOverlayPath = null;
   if (outroEnabled) {
     const overlaysDir = path.posix.join(
       (process.env.ASSETS_DIR || '/app/assets').replace(/\\/g, '/'),
       'overlays'
     );
-    const resizedPath = path.posix.join(overlaysDir, 'logo_firma_resized.png');
-    const originalPath = path.posix.join(overlaysDir, BRAND.outro.logo_file);
+    const candidate = path.posix.join(overlaysDir, 'outro_complete.png');
     try {
-      await stat(resizedPath);
-      logoPath = resizedPath;
+      await stat(candidate);
+      outroOverlayPath = candidate;
     } catch {
-      logoPath = originalPath;
+      logger?.warn?.('outro_complete.png no existe, outro desactivado este reel');
     }
   }
+  const useOutro = !!outroOverlayPath;
   let filterComplex;
-  if (outroEnabled) {
-    const logoY = pctY(BRAND.outro.logo_y_pct);
-    // Input 0 = video, input 1 = audio, input 2 = logo PNG. El audio no tiene
-    // stream de video, asi que el logo se referencia como [2:v].
-    // Si el logo viene pre-redimensionado por bootstrap, omitimos el filtro
-    // scale (ahorra mucho CPU porque ffmpeg no decodifica el PNG grande
-    // ni lo reescala cada frame).
-    const isResized = logoPath?.endsWith('logo_firma_resized.png');
-    if (isResized) {
-      filterComplex = [
-        `[0:v]${vf}[base]`,
-        `[base][2:v]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
-      ].join(';');
-    } else {
-      const logoW = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
-      filterComplex = [
-        `[0:v]${vf}[base]`,
-        `[2:v]scale=${logoW}:-1[logo]`,
-        `[base][logo]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
-      ].join(';');
-    }
+  if (useOutro) {
+    // Input 0 = video, input 1 = audio, input 2 = outro PNG (mismo tamano
+    // que el video, ya tiene backdrop + logo + frase combinados).
+    // Aplicamos fade-in alpha de fade_in_duration segundos al PNG entero.
+    const fadeDur = BRAND.outro.fade_in_duration;
+    filterComplex = [
+      `[0:v]${vf}[base]`,
+      `[2:v]format=rgba,fade=in:st=${outroStart.toFixed(3)}:d=${fadeDur}:alpha=1[outro]`,
+      `[base][outro]overlay=x=0:y=0:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
+    ].join(';');
   } else {
     filterComplex = `[0:v]${vf}[v]`;
   }
@@ -617,8 +572,8 @@ async function applyOverlays(
     '-i', videoPath,
     '-i', audioPath,
   ];
-  if (outroEnabled) {
-    args.push('-loop', '1', '-i', logoPath);
+  if (useOutro) {
+    args.push('-loop', '1', '-i', outroOverlayPath);
   }
   args.push(
     '-filter_complex', filterComplex,

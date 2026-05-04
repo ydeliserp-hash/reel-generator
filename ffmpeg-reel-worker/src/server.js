@@ -31,8 +31,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { composeReel } from './compose.js';
-import { ensureGradientBackground, ensureResizedLogo } from './utils/background.js';
-import { BRAND } from './branding.js';
+import { ensureGradientBackground, ensureResizedLogo, ensureOutroOverlay } from './utils/background.js';
+import { BRAND, pctY } from './branding.js';
 
 // ---------------------------------------------------------------------------
 // Configuracion via entorno
@@ -497,14 +497,36 @@ async function bootstrap() {
     logger.warn({ err: e.message }, 'background bake failed (continuing with solid color)');
   });
 
-  // Pre-redimensionar el logo del outro UNA VEZ (best-effort). Si falla,
-  // compose.js usara el PNG original (mas lento pero funciona).
+  // Pre-renderizar el outro completo como UN SOLO PNG (backdrop + logo +
+  // frase). Asi applyOverlays solo necesita un overlay con `enable=` en
+  // los ultimos 3s, en vez de 4 capas separadas. Reduce drasticamente el
+  // tiempo del filter graph en VPS limitados.
   if (BRAND.outro?.enabled) {
     const originalLogo = path.join(ASSETS_DIR, 'overlays', BRAND.outro.logo_file);
     const resizedLogo = path.join(ASSETS_DIR, 'overlays', 'logo_firma_resized.png');
     const targetWidth = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
     await ensureResizedLogo(originalLogo, resizedLogo, targetWidth, logger).catch((e) => {
       logger.warn({ err: e.message }, 'logo resize failed (continuing with original)');
+    });
+    const outroOverlayPath = path.join(ASSETS_DIR, 'overlays', 'outro_complete.png');
+    const cursiveFontFile = path.join(FONT_DIR, BRAND.fonts.file_cursive);
+    await ensureOutroOverlay({
+      outputPath: outroOverlayPath,
+      videoW: BRAND.video.width,
+      videoH: BRAND.video.height,
+      originalLogoPath: resizedLogo,
+      fontFile: cursiveFontFile,
+      logoWidth: targetWidth,
+      logoY: pctY(BRAND.outro.logo_y_pct),
+      phraseText: BRAND.outro.phrase_text,
+      phraseFontSize: BRAND.outro.phrase_font_size,
+      phraseColor: BRAND.outro.phrase_color,
+      phraseY: pctY(BRAND.outro.phrase_y_pct),
+      backdropColor: BRAND.outro.backdrop_color,
+      backdropAlpha: BRAND.outro.backdrop_alpha,
+      backdropPadding: BRAND.outro.backdrop_padding,
+    }, logger).catch((e) => {
+      logger.warn({ err: e.message }, 'outro overlay pre-render failed (fallback a multi-filtro en runtime)');
     });
   }
 
