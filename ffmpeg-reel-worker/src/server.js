@@ -31,7 +31,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { composeReel } from './compose.js';
-import { ensureGradientBackground } from './utils/background.js';
+import { ensureGradientBackground, ensureResizedLogo } from './utils/background.js';
+import { BRAND } from './branding.js';
 
 // ---------------------------------------------------------------------------
 // Configuracion via entorno
@@ -495,6 +496,17 @@ async function bootstrap() {
   await ensureGradientBackground(overlayPath, logger).catch((e) => {
     logger.warn({ err: e.message }, 'background bake failed (continuing with solid color)');
   });
+
+  // Pre-redimensionar el logo del outro UNA VEZ (best-effort). Si falla,
+  // compose.js usara el PNG original (mas lento pero funciona).
+  if (BRAND.outro?.enabled) {
+    const originalLogo = path.join(ASSETS_DIR, 'overlays', BRAND.outro.logo_file);
+    const resizedLogo = path.join(ASSETS_DIR, 'overlays', 'logo_firma_resized.png');
+    const targetWidth = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
+    await ensureResizedLogo(originalLogo, resizedLogo, targetWidth, logger).catch((e) => {
+      logger.warn({ err: e.message }, 'logo resize failed (continuing with original)');
+    });
+  }
 
   app.listen(PORT, () => {
     logger.info(

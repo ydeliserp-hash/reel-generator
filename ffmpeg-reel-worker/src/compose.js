@@ -16,7 +16,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFile, writeFile } from 'node:fs/promises';
+import { copyFile, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   BRAND,
@@ -569,20 +569,45 @@ async function applyOverlays(
 
   // Si hay outro, anadimos el logo PNG como segundo input y lo overlayeamos
   // tras la cadena de filtros del video principal.
-  const logoPath = outroEnabled
-    ? path.posix.join((process.env.ASSETS_DIR || '/app/assets').replace(/\\/g, '/'), 'overlays', BRAND.outro.logo_file)
-    : null;
+  // Preferimos el PNG redimensionado por bootstrap (594 px ancho, ~50 KB)
+  // sobre el original (~5 MB, 2870 px). Si no existe, fallback al original.
+  let logoPath = null;
+  if (outroEnabled) {
+    const overlaysDir = path.posix.join(
+      (process.env.ASSETS_DIR || '/app/assets').replace(/\\/g, '/'),
+      'overlays'
+    );
+    const resizedPath = path.posix.join(overlaysDir, 'logo_firma_resized.png');
+    const originalPath = path.posix.join(overlaysDir, BRAND.outro.logo_file);
+    try {
+      await stat(resizedPath);
+      logoPath = resizedPath;
+    } catch {
+      logoPath = originalPath;
+    }
+  }
   let filterComplex;
   if (outroEnabled) {
-    const logoW = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
     const logoY = pctY(BRAND.outro.logo_y_pct);
     // Input 0 = video, input 1 = audio, input 2 = logo PNG. El audio no tiene
     // stream de video, asi que el logo se referencia como [2:v].
-    filterComplex = [
-      `[0:v]${vf}[base]`,
-      `[2:v]scale=${logoW}:-1[logo]`,
-      `[base][logo]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
-    ].join(';');
+    // Si el logo viene pre-redimensionado por bootstrap, omitimos el filtro
+    // scale (ahorra mucho CPU porque ffmpeg no decodifica el PNG grande
+    // ni lo reescala cada frame).
+    const isResized = logoPath?.endsWith('logo_firma_resized.png');
+    if (isResized) {
+      filterComplex = [
+        `[0:v]${vf}[base]`,
+        `[base][2:v]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
+      ].join(';');
+    } else {
+      const logoW = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
+      filterComplex = [
+        `[0:v]${vf}[base]`,
+        `[2:v]scale=${logoW}:-1[logo]`,
+        `[base][logo]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
+      ].join(';');
+    }
   } else {
     filterComplex = `[0:v]${vf}[v]`;
   }

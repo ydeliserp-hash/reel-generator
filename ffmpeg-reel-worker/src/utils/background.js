@@ -185,6 +185,30 @@ export async function ensureGradientBackground(outputPath, logger) {
 }
 
 /**
+ * Pre-redimensiona el logo del outro a su tamano final (594 px de ancho)
+ * UNA SOLA VEZ al arrancar el worker. Asi FFmpeg no tiene que decodificar
+ * el PNG original (~2870x1472, ~5MB) ni reescalarlo cada frame del video.
+ * Si el redimensionado falla, devuelve null y compose.js usara el original.
+ */
+export async function ensureResizedLogo(originalLogoPath, resizedLogoPath, targetWidth, logger) {
+  try {
+    await runFfmpeg([
+      '-y',
+      '-i', originalLogoPath,
+      '-vf', `scale=${targetWidth}:-1:flags=lanczos`,
+      '-frames:v', '1',
+      resizedLogoPath,
+    ]);
+    const s = await stat(resizedLogoPath);
+    logger?.info?.({ resizedLogoPath, bytes: s.size, targetWidth }, 'logo resized for outro');
+    return resizedLogoPath;
+  } catch (e) {
+    logger?.warn?.({ err: e.message }, 'logo resize failed, compose usara el PNG original');
+    return null;
+  }
+}
+
+/**
  * Devuelve la lista de paths de bg patterns disponibles para rotar.
  * Si no hay (no se generaron o no hay token), devuelve [outputPath] como
  * unico fallback. Compose.js usa modulo sobre esta lista.
