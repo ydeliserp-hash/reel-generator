@@ -64,14 +64,17 @@ async function generateImageWithGemini(prompt, destPath, logger) {
   // Lista de modelos candidatos en orden de preferencia (probados en cascada).
   // Se puede sobrescribir con env GEMINI_IMAGEN_MODEL para forzar uno especifico.
   // Confirmados disponibles en AI Studio paid tier (mayo 2026).
+  // Orden: primero modelos Gemini multimodales (disponibles en Nivel 1 paid),
+  // luego Imagen (que pueden requerir Nivel 2+ y devolver "Imagen 3 is only
+  // available on paid plans" incluso estando en paid).
   const candidates = [
     process.env.GEMINI_IMAGEN_MODEL,
-    'imagen-4.0-fast-generate-001',          // Imagen 4 fast - mejor balance calidad/precio
+    'gemini-2.5-flash-image',                 // Gemini 2.5 multimodal (estable, Nivel 1 OK)
+    'gemini-3.1-flash-image-preview',         // Gemini 3.1 preview
+    'gemini-3-pro-image-preview',             // Gemini 3 Pro preview
+    'imagen-4.0-fast-generate-001',          // Imagen 4 fast (puede requerir Nivel 2)
     'imagen-4.0-generate-001',                // Imagen 4 standard
-    'gemini-3.1-flash-image-preview',         // Gemini 3.1 multimodal con image gen
-    'gemini-2.5-flash-image',                 // Gemini 2.5 multimodal
-    'imagen-4.0-ultra-generate-001',          // Imagen 4 ultra (mas caro, mejor calidad)
-    'gemini-3-pro-image-preview',             // Gemini 3 Pro multimodal
+    'imagen-4.0-ultra-generate-001',          // Imagen 4 ultra
   ].filter(Boolean);
 
   const errors = [];
