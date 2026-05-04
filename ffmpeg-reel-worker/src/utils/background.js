@@ -1,7 +1,12 @@
 /**
- * Genera fondos para los reels: 5 PNGs distintos con patrones tech/network
- * (plexus, hexagonos, ondas, constelacion, poligonos) generados via Pollinations.ai.
- * Compose alterna entre ellos por segmento del reel para dar variedad visual.
+ * Genera fondos para los reels: 15 PNGs distintos con patrones tech/network/medico
+ * (plexus, hexagonos, ondas, constelacion, poligonos, circuit, holograma, ECG,
+ * particulas, radar, grid 3D, ADN, topografico, red neuronal, ondas sonoras)
+ * generados via Pollinations.ai.
+ *
+ * Compose elige 1 pattern por sesion (hash del sessionDir), asi todos los
+ * segmentos del mismo reel comparten fondo y reels distintos obtienen
+ * fondos distintos de forma deterministica.
  *
  * Si Pollinations no responde o no hay token, fallback a un PNG procedural
  * generado con FFmpeg geq (globo terraqueo).
@@ -39,6 +44,26 @@ async function bakePollinationsPatterns(patternsDir, w, h, logger) {
     'constellation of connected stars and bright dots with thin white lines, deep navy night sky background, minimalist celestial pattern, soft glow',
     // 4 - Poligonos / triangulos
     'abstract geometric polygon network triangles and dots, deep navy and teal gradient background, soft green and cyan accent lines, minimalist science visualization',
+    // 5 - Circuit board / placa de circuito
+    'minimalist circuit board pattern with thin glowing traces and small chip nodes, deep navy gradient background, electric blue and gold accent lines, technological wallpaper, clean composition',
+    // 6 - Holograma scan grid
+    'holographic scan grid with subtle perspective lines and floating data points, deep navy blue gradient background, cyan and teal glow, futuristic interface aesthetic, minimalist',
+    // 7 - ECG / electrocardiograma
+    'subtle electrocardiogram heartbeat lines flowing horizontally with small bright pulse points, deep navy gradient background, electric blue and emerald green waveforms, medical tech aesthetic, minimal',
+    // 8 - Particulas brillantes flotantes
+    'soft floating particles and tiny glowing orbs scattered across deep navy gradient background, cyan and white bokeh accents, ethereal minimalist composition, abstract science wallpaper',
+    // 9 - Radar / circulos concentricos
+    'concentric circles radar pattern with thin glowing rings and small dots, deep navy blue gradient background, soft cyan and teal accents, sonar minimalist aesthetic',
+    // 10 - Grid 3D perspectiva
+    'subtle 3D perspective grid lines fading into distance with light points at intersections, deep navy gradient background, electric blue glow, retrofuturistic tech wallpaper, clean minimalist',
+    // 11 - Cadena ADN / helix
+    'abstract DNA double helix pattern with connected dots and thin curved lines, deep navy gradient background, soft teal and cyan accents, biotech minimalist wallpaper',
+    // 12 - Curvas topograficas
+    'minimalist topographic contour lines flowing organically across deep navy gradient background, thin emerald green and gold accents, abstract map aesthetic, clean composition',
+    // 13 - Red neuronal multicapa
+    'abstract neural network with layers of connected nodes and bright synaptic lines, deep navy blue gradient background, cyan and electric blue accents, AI science minimalist wallpaper',
+    // 14 - Ondas sonoras horizontales
+    'horizontal sound wave equalizer bars with soft glow and small dots, deep navy gradient background, teal and cyan vertical lines of varying height, audio tech minimalist aesthetic',
   ];
 
   await mkdir(patternsDir, { recursive: true });
