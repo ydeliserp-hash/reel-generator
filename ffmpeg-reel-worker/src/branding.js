@@ -21,11 +21,13 @@ export const BRAND = {
     subtitle: 'Montserrat Black',
     title: 'Montserrat Bold',
     signature: 'Montserrat Bold',
+    cursive: 'Great Vibes',
     // Rutas de los .ttf, usadas por el filtro `drawtext` que requiere
     // fontfile=. Se consume desde compose.js parametrizado con FONT_DIR.
     file_subtitle: 'Montserrat-Black.ttf',
     file_title: 'Montserrat-Bold.ttf',
     file_signature: 'Montserrat-Bold.ttf',
+    file_cursive: 'GreatVibes-Regular.ttf',
   },
   // Posiciones expresadas como fraccion del eje vertical (1350 px de alto en 4:5).
   // Layout NUEVO: badge titulo ARRIBA, asset en medio, subtitulos ABAJO,
@@ -55,6 +57,24 @@ export const BRAND = {
     horizontal_padding: 40,
     vertical_padding: 18,
     duration_default: 2.0,
+  },
+  // Outro: overlay sobre los ULTIMOS 3s del video (la voz sigue), con caja
+  // navy semitransparente como difuminado de fondo, logo PNG centrado encima
+  // y frase cursiva con fade-in por opacidad.
+  outro: {
+    enabled: true,                        // siempre activo en todos los reels
+    duration: 3.0,                        // segundos finales con outro visible
+    fade_in_duration: 1.0,                // segundos de fade-in del texto
+    logo_file: 'logo_firma.png',          // en assets/overlays/
+    logo_width_pct: 0.55,                 // ~600 px de ancho (sobre 1080)
+    logo_y_pct: 0.32,                     // posicion vertical del logo
+    backdrop_color: '#0A1F3D',            // navy de marca
+    backdrop_alpha: 0.72,                 // opacidad del difuminado
+    backdrop_padding: 60,                 // padding interno del backdrop
+    phrase_text: 'La mejor medicina es una buena prevención',
+    phrase_font_size: 72,
+    phrase_color: '#FFFFFF',
+    phrase_y_pct: 0.55,                   // debajo del logo
   },
   video: {
     width: 1080,

@@ -438,6 +438,7 @@ async function applyOverlays(
     titleBadge,
     fontDir,
     outputPath,
+    videoDurationTotal,
   },
   logger
 ) {
@@ -450,7 +451,14 @@ async function applyOverlays(
   // se ejecuta en Windows durante desarrollo local.
   const sigFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_signature);
   const titleFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_title);
+  const cursiveFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_cursive);
   const subtitlePathPosix = subtitlePath.replace(/\\/g, '/');
+
+  // Outro: 3s finales con caja navy semitransparente + logo PNG + frase cursiva.
+  // Calculamos el instante de inicio del outro para activar/desactivar capas.
+  const outroEnabled = !!(BRAND.outro?.enabled && videoDurationTotal && videoDurationTotal > BRAND.outro.duration);
+  const outroStart = outroEnabled ? videoDurationTotal - BRAND.outro.duration : null;
+  const fadeEnd = outroEnabled ? outroStart + BRAND.outro.fade_in_duration : null;
 
   const filters = [];
 
@@ -458,20 +466,22 @@ async function applyOverlays(
   filters.push(`ass='${escapeFilterSingleQuoted(subtitlePathPosix)}'`);
 
   // Capa 2: barra navy semitransparente al pie + firma centrada.
+  // Durante el outro la ocultamos para que el logo central protagonice.
+  const sigEnable = outroEnabled ? `:enable='lt(t,${outroStart.toFixed(3)})'` : '';
   filters.push(
-    `drawbox=x=0:y=${SIG_BAR_Y}:w=${BRAND.video.width}:h=${BRAND.signature.bar_height}:color=${sigBarColor}:t=fill`
+    `drawbox=x=0:y=${SIG_BAR_Y}:w=${BRAND.video.width}:h=${BRAND.signature.bar_height}:color=${sigBarColor}:t=fill${sigEnable}`
   );
   const sigTextY = SIG_BAR_Y + Math.round((BRAND.signature.bar_height - BRAND.signature.font_size) / 2) - 4;
-  filters.push(
-    [
-      `drawtext=fontfile='${escapeFilterSingleQuoted(sigFontFile)}'`,
-      `text='${escapeFilterSingleQuoted(signatureText || BRAND.signature.text)}'`,
-      `fontsize=${BRAND.signature.font_size}`,
-      `fontcolor=${sigTextColor}`,
-      'x=(w-text_w)/2',
-      `y=${sigTextY}`,
-    ].join(':')
-  );
+  const sigTextParts = [
+    `drawtext=fontfile='${escapeFilterSingleQuoted(sigFontFile)}'`,
+    `text='${escapeFilterSingleQuoted(signatureText || BRAND.signature.text)}'`,
+    `fontsize=${BRAND.signature.font_size}`,
+    `fontcolor=${sigTextColor}`,
+    'x=(w-text_w)/2',
+    `y=${sigTextY}`,
+  ];
+  if (outroEnabled) sigTextParts.push(`enable='lt(t,${outroStart.toFixed(3)})'`);
+  filters.push(sigTextParts.join(':'));
 
   // Capa 3 (opcional): badge titulo dorado.
   // Por defecto se muestra DURANTE TODO el video. Si titleBadge.duration es
@@ -521,13 +531,70 @@ async function applyOverlays(
     filters.push(drawtextParts.join(':'));
   }
 
+  // Capa 4 (outro): caja navy semitransparente como difuminado de fondo +
+  // frase cursiva con fade-in alpha. El logo se aplica como overlay aparte
+  // (fuera de la cadena `vf` porque overlay necesita 2 streams).
+  if (outroEnabled) {
+    const o = BRAND.outro;
+    const navyAlpha = ffmpegColorAlpha(o.backdrop_color, o.backdrop_alpha);
+    const phraseColor = ffmpegColor(o.phrase_color);
+    // Backdrop: cubre desde encima del logo hasta debajo de la frase.
+    const logoY = pctY(o.logo_y_pct);
+    const phraseY = pctY(o.phrase_y_pct);
+    const backdropTop = Math.max(0, logoY - o.backdrop_padding);
+    const backdropBottom = Math.min(BRAND.video.height, phraseY + o.phrase_font_size + o.backdrop_padding);
+    const backdropX = o.backdrop_padding;
+    const backdropW = BRAND.video.width - 2 * o.backdrop_padding;
+    const backdropH = backdropBottom - backdropTop;
+    filters.push(
+      `drawbox=x=${backdropX}:y=${backdropTop}:w=${backdropW}:h=${backdropH}:color=${navyAlpha}:t=fill:enable='gte(t,${outroStart.toFixed(3)})'`
+    );
+    // Frase cursiva con fade-in alpha (0 antes de outroStart, ramp 0→1 entre
+    // outroStart y fadeEnd, 1 despues).
+    const aExpr = `if(lt(t,${outroStart.toFixed(3)}),0,if(lt(t,${fadeEnd.toFixed(3)}),(t-${outroStart.toFixed(3)})/${o.fade_in_duration},1))`;
+    filters.push(
+      [
+        `drawtext=fontfile='${escapeFilterSingleQuoted(cursiveFontFile)}'`,
+        `text='${escapeFilterSingleQuoted(o.phrase_text)}'`,
+        `fontsize=${o.phrase_font_size}`,
+        `fontcolor=${phraseColor}`,
+        'x=(w-text_w)/2',
+        `y=${phraseY}`,
+        `alpha='${aExpr}'`,
+      ].join(':')
+    );
+  }
+
   const vf = filters.join(',');
+
+  // Si hay outro, anadimos el logo PNG como segundo input y lo overlayeamos
+  // tras la cadena de filtros del video principal.
+  const logoPath = outroEnabled
+    ? path.posix.join((process.env.ASSETS_DIR || '/app/assets').replace(/\\/g, '/'), 'overlays', BRAND.outro.logo_file)
+    : null;
+  let filterComplex;
+  if (outroEnabled) {
+    const logoW = Math.round(BRAND.video.width * BRAND.outro.logo_width_pct);
+    const logoY = pctY(BRAND.outro.logo_y_pct);
+    filterComplex = [
+      `[0:v]${vf}[base]`,
+      `[1:v]scale=${logoW}:-1[logo]`,
+      `[base][logo]overlay=x=(W-w)/2:y=${logoY}:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
+    ].join(';');
+  } else {
+    filterComplex = `[0:v]${vf}[v]`;
+  }
 
   const args = [
     '-y',
     '-i', videoPath,
     '-i', audioPath,
-    '-filter_complex', `[0:v]${vf}[v]`,
+  ];
+  if (outroEnabled) {
+    args.push('-loop', '1', '-i', logoPath);
+  }
+  args.push(
+    '-filter_complex', filterComplex,
     '-map', '[v]',
     '-map', '1:a',
     '-c:v', 'libx264',
@@ -542,7 +609,7 @@ async function applyOverlays(
     // siempre se reproduce hasta el final, aunque el video acabe antes
     // (en cuyo caso se queda en frame congelado el ultimo instante).
     outputPath,
-  ];
+  );
   await runFfmpeg(args, logger);
   return outputPath;
 }
@@ -731,6 +798,11 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   );
 
   // Paso 4: overlays + audio.
+  // videoDurationTotal = duracion final del video. La uso en applyOverlays
+  // para calcular el inicio del outro (T - 3s).
+  const videoDurationTotal = audioDurationProbed && audioDurationProbed > 0
+    ? audioDurationProbed
+    : audioDurations.reduce((acc, d) => acc + d, 0);
   const outputPath = path.join(sessionDir, 'output.mp4');
   await applyOverlays(
     {
@@ -741,6 +813,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       titleBadge: spec.title_badge,
       fontDir,
       outputPath,
+      videoDurationTotal,
     },
     logger
   );

@@ -19,19 +19,19 @@ mkdir -p "$FONTS_DIR"
 
 # Fuentes a descargar. El orden de las URLs base se prueba secuencialmente
 # para cada fichero hasta que una responda 200 OK.
-declare -a FONTS=(
-  "Montserrat-Regular.ttf"
-  "Montserrat-Bold.ttf"
-  "Montserrat-Black.ttf"
+# Cada fuente se intenta desde un set de URLs base distinto (familia distinta).
+# Formato: "Nombre.ttf|url_base_1|url_base_2|..."
+# Min size esta tras el primer ":" del nombre si quieres override (default 50000).
+declare -a FONT_SPECS=(
+  "Montserrat-Regular.ttf|https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf|https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf|https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static"
+  "Montserrat-Bold.ttf|https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf|https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf|https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static"
+  "Montserrat-Black.ttf|https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf|https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf|https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static"
+  "GreatVibes-Regular.ttf|https://raw.githubusercontent.com/google/fonts/main/ofl/greatvibes|https://github.com/google/fonts/raw/main/ofl/greatvibes"
 )
 
-declare -a BASE_URLS=(
-  "https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf"
-  "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf"
-  "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/static"
-)
-
-for filename in "${FONTS[@]}"; do
+for spec in "${FONT_SPECS[@]}"; do
+  IFS='|' read -ra parts <<< "$spec"
+  filename="${parts[0]}"
   dest="$FONTS_DIR/$filename"
   if [ -f "$dest" ] && [ -s "$dest" ]; then
     echo "[fonts] $filename ya existe, skip"
@@ -39,14 +39,15 @@ for filename in "${FONTS[@]}"; do
   fi
 
   success=0
-  for base in "${BASE_URLS[@]}"; do
+  # Recorrer URLs base (a partir del indice 1)
+  for ((i=1; i<${#parts[@]}; i++)); do
+    base="${parts[$i]}"
     url="$base/$filename"
     echo "[fonts] intentando $url"
     if curl -fsSL --retry 2 --retry-delay 2 --max-time 30 "$url" -o "$dest"; then
-      # Verificacion minima: el fichero existe y pesa al menos 50 KB
-      # (los .ttf de Montserrat pesan >100 KB; <50 KB es respuesta corrupta).
       size=$(wc -c < "$dest" 2>/dev/null || echo 0)
-      if [ "$size" -ge 50000 ]; then
+      # Great Vibes pesa ~70 KB, Montserrat ~450 KB. Min 30 KB cubre ambos.
+      if [ "$size" -ge 30000 ]; then
         echo "[fonts] OK $filename ($size bytes)"
         success=1
         break
