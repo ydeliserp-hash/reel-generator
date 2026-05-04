@@ -481,19 +481,33 @@ async function applyOverlays(
     const dur = typeof titleBadge.duration === 'number' && titleBadge.duration > 0
       ? titleBadge.duration
       : null; // null = siempre visible
-    const fontSize = BRAND.title_badge.font_size;
+    const baseSize = BRAND.title_badge.font_size;
     const padH = BRAND.title_badge.horizontal_padding;
     const padV = BRAND.title_badge.vertical_padding;
-    const approxBadgeWidth = Math.min(
-      BRAND.video.width - 80,
-      Math.round(titleBadge.text.length * fontSize * 0.55 + padH * 2)
+    // Margen lateral minimo a cada lado del badge respecto al borde del video.
+    const sideMargin = 40;
+    const maxBadgeW = BRAND.video.width - 2 * sideMargin;
+    const maxTextW = maxBadgeW - 2 * padH;
+    // Aproximacion de ancho de texto en Montserrat Bold mayusculas.
+    const charWidthFactor = 0.58;
+    const wantTextW = titleBadge.text.length * baseSize * charWidthFactor;
+    // Auto-shrink: si el texto base no cabe, reducimos fontsize hasta que quepa
+    // (con limite minimo legible). Asi drawbox y drawtext usan el mismo
+    // tamano y el badge no queda mas estrecho que su texto.
+    let fontSize = baseSize;
+    if (wantTextW > maxTextW) {
+      fontSize = Math.max(28, Math.floor(maxTextW / (titleBadge.text.length * charWidthFactor)));
+    }
+    const badgeWidth = Math.min(
+      maxBadgeW,
+      Math.round(titleBadge.text.length * fontSize * charWidthFactor + padH * 2)
     );
-    const approxBadgeHeight = fontSize + padV * 2;
+    const badgeHeight = fontSize + padV * 2;
     const badgeY = pctY(BRAND.positions.title_badge_y_pct);
-    const badgeX = Math.round((BRAND.video.width - approxBadgeWidth) / 2);
+    const badgeX = Math.round((BRAND.video.width - badgeWidth) / 2);
     const enableClause = dur ? `:enable='lt(t,${dur})'` : '';
     filters.push(
-      `drawbox=x=${badgeX}:y=${badgeY}:w=${approxBadgeWidth}:h=${approxBadgeHeight}:color=${navyColor}:t=fill${enableClause}`
+      `drawbox=x=${badgeX}:y=${badgeY}:w=${badgeWidth}:h=${badgeHeight}:color=${navyColor}:t=fill${enableClause}`
     );
     const drawtextParts = [
       `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
