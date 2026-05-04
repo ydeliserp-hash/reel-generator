@@ -61,15 +61,16 @@ async function generateImageWithGemini(prompt, destPath, logger) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY no configurado en el worker');
 
-  // Lista de modelos candidatos en orden de preferencia.
-  // Se puede sobrescribir con env GEMINI_IMAGEN_MODEL.
+  // Lista de modelos candidatos en orden de preferencia (probados en cascada).
+  // Se puede sobrescribir con env GEMINI_IMAGEN_MODEL para forzar uno especifico.
   const candidates = [
     process.env.GEMINI_IMAGEN_MODEL,
-    'gemini-2.5-flash-image-preview',
-    'gemini-2.0-flash-exp',
-    'imagen-3.0-fast-generate-001',
-    'imagen-3.0-generate-001',
-    'imagen-3.0-generate-002',
+    'gemini-2.0-flash-preview-image-generation',  // Gemini 2.0 con image gen, AI Studio
+    'gemini-2.5-flash-image',                      // Variante alternativa nombre
+    'gemini-2.0-flash-exp-image-generation',       // Variante experimental
+    'imagen-3.0-fast-generate-001',                // Imagen 3 fast (requiere billing)
+    'imagen-3.0-generate-001',                     // Imagen 3 standard
+    'imagen-3.0-generate-002',                     // Imagen 3 V2
   ].filter(Boolean);
 
   const errors = [];
