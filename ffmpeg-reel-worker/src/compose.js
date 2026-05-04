@@ -16,7 +16,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { copyFile } from 'node:fs/promises';
+import { copyFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   BRAND,
@@ -45,6 +45,66 @@ async function getBgForSegment(segIndex) {
     _bgPatternsCache = await listBackgroundPatterns(BG_GRADIENT_PATH);
   }
   return _bgPatternsCache[segIndex % _bgPatternsCache.length];
+}
+
+/**
+ * Genera una imagen con Imagen 3 (Google AI Studio) y la guarda en destPath.
+ * Devuelve destPath si OK, o lanza Error si falla (autenticacion, cuota, etc).
+ */
+async function generateImageWithGemini(prompt, destPath, logger) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error('GEMINI_API_KEY no configurado en el worker');
+
+  // Imagen 3 endpoint via Google AI Studio
+  const model = process.env.GEMINI_IMAGEN_MODEL || 'imagen-3.0-generate-002';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${apiKey}`;
+
+  const body = {
+    instances: [{ prompt }],
+    parameters: {
+      sampleCount: 1,
+      aspectRatio: '3:4',          // portrait, mas cercano al canvas 4:5
+      personGeneration: 'allow_adult',
+    },
+  };
+
+  const t0 = Date.now();
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    throw new Error(`gemini fetch error: ${e.message}`);
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`gemini ${res.status}: ${text.slice(0, 400)}`);
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    throw new Error('gemini bad JSON response');
+  }
+
+  const b64 = data?.predictions?.[0]?.bytesBase64Encoded;
+  if (!b64) {
+    throw new Error('gemini response sin bytesBase64Encoded: ' + JSON.stringify(data).slice(0, 300));
+  }
+
+  const buffer = Buffer.from(b64, 'base64');
+  if (buffer.length < 1000) {
+    throw new Error('gemini buffer demasiado pequeno: ' + buffer.length);
+  }
+
+  await writeFile(destPath, buffer);
+  logger?.info?.({ destPath, bytes: buffer.length, elapsedMs: Date.now() - t0 }, 'gemini image generated');
+  return destPath;
 }
 
 /**
@@ -462,36 +522,58 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       seg._localPath = dest;
       return;
     }
+    // Cascada en 3 niveles: Gemini Imagen → Pollinations → Pexels
+    // El primero que tenga éxito gana; el resto se ignora.
+    const errors = [];
+
+    // NIVEL 1: Gemini Imagen 3 (calidad maxima, anatomia decente)
+    if (seg.asset.gemini_prompt && process.env.GEMINI_API_KEY) {
+      const destGemini = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}_gemini.png`);
+      try {
+        await generateImageWithGemini(seg.asset.gemini_prompt, destGemini, logger);
+        seg._localPath = destGemini;
+        return;
+      } catch (err) {
+        errors.push({ src: 'gemini', msg: err.message?.slice(0, 200) });
+        logger?.warn?.({ idx: i, err: err.message?.slice(0, 200) }, 'gemini failed, trying pollinations');
+      }
+    }
+
+    // NIVEL 2: URL principal (Pollinations.ai u otra)
     const ext = extFromUrl(seg.asset.url, seg.asset.type === 'image' ? '.jpg' : '.mp4');
     const assetPath = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
     const isPollinations = seg.asset.url?.includes('pollinations.ai');
-    // Intento primario con timeout y reintentos diferenciados
-    try {
-      await downloadToFile(seg.asset.url, assetPath, {
-        timeoutMs: isPollinations ? 120000 : 60000,
-        maxRetries: isPollinations ? 4 : 3,
-      });
-      seg._localPath = assetPath;
-      return;
-    } catch (errPrimary) {
-      // Fallback: si la primaria fallo y hay url_fallback (Pexels), intentamos con esa
-      if (seg.asset.url_fallback) {
-        logger?.warn?.({
-          idx: i,
-          primary: seg.asset.url?.slice(0, 100),
-          err: errPrimary.message?.slice(0, 200),
-        }, 'primary asset failed, trying fallback');
-        const extFb = extFromUrl(seg.asset.url_fallback, '.jpg');
-        const assetPathFb = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}_fb${extFb}`);
+    if (seg.asset.url) {
+      try {
+        await downloadToFile(seg.asset.url, assetPath, {
+          timeoutMs: isPollinations ? 120000 : 60000,
+          maxRetries: isPollinations ? 4 : 3,
+        });
+        seg._localPath = assetPath;
+        return;
+      } catch (errUrl) {
+        errors.push({ src: isPollinations ? 'pollinations' : 'url', msg: errUrl.message?.slice(0, 200) });
+        logger?.warn?.({ idx: i, err: errUrl.message?.slice(0, 200) }, 'url failed, trying fallback');
+      }
+    }
+
+    // NIVEL 3: URL fallback (Pexels)
+    if (seg.asset.url_fallback) {
+      const extFb = extFromUrl(seg.asset.url_fallback, '.jpg');
+      const assetPathFb = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}_fb${extFb}`);
+      try {
         await downloadToFile(seg.asset.url_fallback, assetPathFb, {
           timeoutMs: 60000,
           maxRetries: 3,
         });
         seg._localPath = assetPathFb;
         return;
+      } catch (errFb) {
+        errors.push({ src: 'pexels_fb', msg: errFb.message?.slice(0, 200) });
       }
-      throw errPrimary;
     }
+
+    throw new Error(`Asset segmento ${i}: todas las fuentes fallaron: ${JSON.stringify(errors)}`);
   });
 
   await Promise.all([
