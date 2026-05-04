@@ -27,6 +27,7 @@ import {
 import { writeSubtitleFile } from './subtitles.js';
 import { downloadToFile, extFromUrl } from './utils/download.js';
 import { probeDuration } from './utils/probe.js';
+import { listBackgroundPatterns } from './utils/background.js';
 
 // Coordenadas derivadas del branding (en px, sistema FFmpeg con origen arriba-izquierda).
 const ASSET_TOP_Y = pctY(BRAND.positions.asset_top_pct);
@@ -36,6 +37,15 @@ const SIG_BAR_Y = pctY(BRAND.positions.signature_bar_y_pct) - Math.floor(BRAND.s
 
 // Path al PNG de fondo navy degradado (lo hornea utils/background.js al arranque).
 const BG_GRADIENT_PATH = path.join(process.env.ASSETS_DIR || '/app/assets', 'overlays', 'bg_gradient.png');
+
+// Cache de patterns disponibles para rotar (descubierto al primer compose).
+let _bgPatternsCache = null;
+async function getBgForSegment(segIndex) {
+  if (_bgPatternsCache === null) {
+    _bgPatternsCache = await listBackgroundPatterns(BG_GRADIENT_PATH);
+  }
+  return _bgPatternsCache[segIndex % _bgPatternsCache.length];
+}
 
 /**
  * Ejecuta ffmpeg con los args dados. Resuelve con stderr al exit 0,
@@ -133,6 +143,7 @@ async function buildImageSegment(
   { assetPath, duration, outputPath, segIndex, kenBurnsHint },
   logger
 ) {
+  const bgPath = await getBgForSegment(segIndex);
   const fps = BRAND.video.fps;
   const frames = Math.max(Math.round(duration * fps), 1);
   const kb = kenBurnsExpr(segIndex, frames, kenBurnsHint);
@@ -190,7 +201,7 @@ async function buildImageSegment(
 
   const args = [
     '-y',
-    '-loop', '1', '-i', BG_GRADIENT_PATH,
+    '-loop', '1', '-i', bgPath,
     '-loop', '1', '-i', assetPath,
     '-filter_complex', filterComplex,
     '-map', '[vout]',
@@ -211,9 +222,10 @@ async function buildImageSegment(
  * de `trimStart`. Si el video original es mas corto, hace loop.
  */
 async function buildVideoSegment(
-  { assetPath, duration, trimStart = 0, outputPath },
+  { assetPath, duration, trimStart = 0, outputPath, segIndex = 0 },
   logger
 ) {
+  const bgPath = await getBgForSegment(segIndex);
   const fps = BRAND.video.fps;
   const padColor = ffmpegColor(BRAND.colors.bg_dark);
   const W = BRAND.video.width;
@@ -538,6 +550,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
             duration: visualDur,
             trimStart: seg.asset.trim_start ?? 0,
             outputPath: segOut,
+            segIndex: i,
           },
           logger
         );
