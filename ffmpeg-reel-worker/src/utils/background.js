@@ -33,34 +33,38 @@ function runFfmpeg(args) {
  */
 async function bakePollinationsPatterns(patternsDir, w, h, logger) {
   const POLLINATIONS_TOKEN = process.env.POLLINATIONS_TOKEN || '';
-  // Set curado por la doctora: solo los patterns que mejor encajan con su
-  // estilo medico/tech. Originalmente eran 15 (plexus, hexagonos, ondas,
-  // etc.); estos 7 son los favoritos confirmados visualmente.
+  // Set curado: 8 favoritos confirmados + 5 nuevos en tonos navy/teal/verdeazul,
+  // con lineas suaves y puntos tenues (low contrast). Eliminados de iteraciones
+  // previas: hexagonos, ondas fluidas, circuit board, holograma, ECG, radar,
+  // topografico, ondas sonoras, constelacion brillante, nebulosa, cristal 3D,
+  // estructura atomica.
   const PATTERN_PROMPTS = [
-    // 0 - Plexus / red de nodos conectados
+    // 0 - Plexus
     'minimalist plexus network of connected dots and bright thin lines floating in space, deep navy blue gradient background, cyan and electric blue accent dots, abstract tech aesthetic, minimal composition',
-    // 1 - Constelacion (originalmente idx 3)
-    'constellation of connected stars and bright dots with thin white lines, deep navy night sky background, minimalist celestial pattern, soft glow',
-    // 2 - Poligonos / triangulos (originalmente idx 4)
+    // 1 - Poligonos
     'abstract geometric polygon network triangles and dots, deep navy and teal gradient background, soft green and cyan accent lines, minimalist science visualization',
-    // 3 - Particulas brillantes flotantes (originalmente idx 8)
+    // 2 - Particulas flotantes
     'soft floating particles and tiny glowing orbs scattered across deep navy gradient background, cyan and white bokeh accents, ethereal minimalist composition, abstract science wallpaper',
-    // 4 - Grid 3D perspectiva (originalmente idx 10)
+    // 3 - Grid 3D perspectiva
     'subtle 3D perspective grid lines fading into distance with light points at intersections, deep navy gradient background, electric blue glow, retrofuturistic tech wallpaper, clean minimalist',
-    // 5 - Cadena ADN / helix (originalmente idx 11)
+    // 4 - ADN doble helice
     'abstract DNA double helix pattern with connected dots and thin curved lines, deep navy gradient background, soft teal and cyan accents, biotech minimalist wallpaper',
-    // 6 - Red neuronal multicapa (originalmente idx 13)
+    // 5 - Red neuronal
     'abstract neural network with layers of connected nodes and bright synaptic lines, deep navy blue gradient background, cyan and electric blue accents, AI science minimalist wallpaper',
-    // 7 - Nebulosa cosmica con estrellas
-    'cosmic nebula with scattered bright stars and soft glowing dust clouds, deep navy and indigo space background, subtle cyan and white pinpoints, ethereal celestial wallpaper, minimalist',
-    // 8 - Estructura cristalina 3D
-    'abstract 3D crystal lattice structure with thin glowing edges and bright vertices, deep navy gradient background, soft teal and electric blue highlights, geometric biotech aesthetic, minimalist',
-    // 9 - Particulas bioluminiscentes flotando
+    // 6 - Particulas bioluminiscentes
     'soft bioluminescent particles drifting in deep navy gradient space, glowing teal and emerald orbs of varying size, organic medical aesthetic, ethereal minimalist composition',
-    // 10 - Sinapsis fluidas con flow
+    // 7 - Sinapsis fluidas
     'flowing synaptic connections with bright pulse points and curved thin lines, deep navy gradient background, electric blue and white glow, neural medical aesthetic, minimalist abstract',
-    // 11 - Estructura atomica con orbitales
-    'abstract atomic structure with elliptical orbital paths and bright nucleus points, deep navy gradient background, soft cyan and gold accents, scientific minimalist wallpaper',
+    // 8 - Lluvia digital tenue
+    'soft vertical digital rain lines descending slowly with small dim dots, deep navy blue gradient background, muted teal-green accents, low contrast minimalist tech aesthetic, calm wallpaper',
+    // 9 - Malla organica curva
+    'soft organic curved mesh pattern with thin flowing lines and small subtle dim dots at intersections, deep navy and dark blue-green gradient background, muted teal accents, calm minimalist composition, low contrast',
+    // 10 - Capas de ondas profundas
+    'overlapping deep wave layers with thin curved lines and small dim particles, deep navy and dark teal gradient, soft turquoise accents, low contrast minimalist abstract, oceanic depth wallpaper',
+    // 11 - Lineas topograficas suaves
+    'abstract topographic depth lines curving softly across the canvas with small subtle dim dots, deep midnight blue background with soft teal-green undertones, muted cyan accents, calm minimalist wallpaper, low contrast',
+    // 12 - Constelacion tenue
+    'loose network of dim stars connected by thin soft lines, deep navy blue gradient with muted teal undertones, small low brightness dots, calm minimalist celestial aesthetic, low contrast wallpaper',
   ];
 
   await mkdir(patternsDir, { recursive: true });

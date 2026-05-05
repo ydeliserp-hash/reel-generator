@@ -478,17 +478,18 @@ app.get('/output/:sessionId', async (req, res) => {
 app.get('/patterns', async (req, res) => {
   const labels = [
     '0 - Plexus',
-    '1 - Constelacion',
-    '2 - Poligonos',
-    '3 - Particulas flotantes',
-    '4 - Grid 3D perspectiva',
-    '5 - ADN doble helice',
-    '6 - Red neuronal',
-    '7 - Nebulosa cosmica',
-    '8 - Cristal 3D',
-    '9 - Particulas bioluminiscentes',
-    '10 - Sinapsis fluidas',
-    '11 - Estructura atomica',
+    '1 - Poligonos',
+    '2 - Particulas flotantes',
+    '3 - Grid 3D perspectiva',
+    '4 - ADN doble helice',
+    '5 - Red neuronal',
+    '6 - Particulas bioluminiscentes',
+    '7 - Sinapsis fluidas',
+    '8 - Lluvia digital tenue',
+    '9 - Malla organica curva',
+    '10 - Capas de ondas profundas',
+    '11 - Lineas topograficas suaves',
+    '12 - Constelacion tenue',
   ];
   const tiles = labels.map((label, idx) => `
     <figure>
