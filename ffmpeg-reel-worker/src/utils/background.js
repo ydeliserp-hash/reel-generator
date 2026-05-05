@@ -213,8 +213,10 @@ export async function ensureOutroOverlay(params, logger) {
   const backdropX = backdropPadding;
   const backdropW = videoW - 2 * backdropPadding;
   const backdropH = backdropBottom - backdropTop;
-  const navyAlpha = `${backdropColor.replace('#', '0x').toUpperCase()}@${backdropAlpha}`;
-  const textColor = phraseColor.replace('#', '0x').toUpperCase();
+  // Importante: ffmpeg requiere prefijo `0x` en MINUSCULAS (acepta los hex
+  // RRGGBB en mayusculas). `0X` con X mayuscula da "Cannot find color".
+  const navyAlpha = `0x${backdropColor.replace('#', '').toUpperCase()}@${backdropAlpha}`;
+  const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
   const fontFilePosix = fontFile.replace(/\\/g, '/');
   const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
