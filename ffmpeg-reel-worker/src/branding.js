@@ -65,15 +65,19 @@ export const BRAND = {
   outro: {
     // Se puede desactivar en runtime con OUTRO_ENABLED=false (sin redeploy de codigo).
     enabled: process.env.OUTRO_ENABLED !== 'false',
-    duration: 8.0,                        // segundos del clip outro al final
+    duration: 3.5,                        // segundos del clip outro al final
     logo_file: 'logo_firma.png',          // en assets/overlays/
     logo_width_pct: 0.55,                 // ~600 px de ancho (sobre 1080)
-    logo_y_pct: 0.32,                     // posicion vertical del logo
-    backdrop_color: '#0A1F3D',            // navy de marca (fondo solido)
-    phrase_text: 'La mejor medicina es una buena prevención',
-    phrase_font_size: 72,
+    logo_y_pct: 0.30,                     // posicion vertical del logo
+    logo_fade_in_duration: 0.7,           // segundos de fade-in del logo
+    backdrop_color: '#0A1F3D',            // navy de marca (fallback)
+    phrase_text: 'La mejor medicina es una buena prevención...',
+    phrase_font_size: 64,
     phrase_color: '#FFFFFF',
-    phrase_y_pct: 0.55,                   // debajo del logo
+    phrase_y_pct: 0.62,                   // debajo del logo (mas separacion que antes)
+    phrase_typing_start: 1.0,             // segundo en que arranca el typing
+    phrase_typing_duration: 1.8,          // duracion del typing
+    transition_duration: 0.5,             // segundos de xfade entre reel y outro
   },
   video: {
     width: 1080,

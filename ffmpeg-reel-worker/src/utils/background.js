@@ -185,59 +185,106 @@ export async function ensureGradientBackground(outputPath, logger) {
 }
 
 /**
- * Pre-renderiza un CLIP MP4 outro de duration segundos con fondo navy solido,
- * logo centrado y frase cursiva. Audio de silencio. Mismos codec/fps/profile
- * que el video principal para que concat demuxer pueda unir SIN reencodear.
+ * Pre-renderiza un PNG con la frase cursiva sobre fondo transparente, del
+ * mismo ancho que el video (asi el centrado se hereda automaticamente al
+ * overlayar). Lo usa ensureOutroClip para hacer el efecto typing via crop
+ * dinamico (mas barato que apilar 50 drawtexts).
+ */
+export async function ensureOutroPhrasePng(params, logger) {
+  const { outputPath, videoW, fontFile, phraseText, phraseFontSize, phraseColor } = params;
+  const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
+  const fontFilePosix = fontFile.replace(/\\/g, '/');
+  const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // Alto del PNG: 1.6x el fontsize para dejar margen vertical (descenders, etc).
+  const phraseH = Math.round(phraseFontSize * 1.6);
+  try {
+    await runFfmpeg([
+      '-y',
+      '-f', 'lavfi',
+      '-i', `color=c=black@0:s=${videoW}x${phraseH}:r=1:d=1`,
+      '-vf', `drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=(h-text_h)/2,format=rgba`,
+      '-frames:v', '1',
+      outputPath,
+    ]);
+    const s = await stat(outputPath);
+    logger?.info?.({ outputPath, bytes: s.size, videoW, phraseH }, 'outro phrase PNG pre-rendered');
+    return { path: outputPath, height: phraseH };
+  } catch (e) {
+    logger?.warn?.({ err: e.message }, 'outro phrase PNG pre-render failed');
+    return null;
+  }
+}
+
+/**
+ * Pre-renderiza el CLIP MP4 outro completo:
+ *   - Fondo: bg_gradient.png (mismo estilo del reel) escalado y loopeado
+ *   - Logo: PNG resized con fade-in alpha animado (0 → logo_fade_in_duration)
+ *   - Frase: PNG pre-renderizado con crop horizontal dinamico (efecto typing)
+ *   - Audio: silencio
  *
- * Se ejecuta UNA SOLA VEZ al arrancar el worker. composeReel concat este
- * clip al final del video principal con `-c copy` (~2 segundos de coste).
+ * Mismos codec/fps/profile que el video principal para que el xfade del
+ * paso final pueda concatenarlos limpiamente.
  *
- * Devuelve el path del MP4 generado, o null si falla.
+ * Se ejecuta UNA SOLA VEZ al arrancar el worker.
  */
 export async function ensureOutroClip(params, logger) {
   const {
     outputPath, videoW, videoH, fps, duration, crf, preset, audioBitrate,
-    originalLogoPath, fontFile,
-    logoWidth, logoY, phraseText, phraseFontSize, phraseColor, phraseY,
+    bgPath, originalLogoPath, phrasePngPath, phrasePngHeight,
+    logoWidth, logoY, logoFadeInDuration,
+    phraseY, phraseTypingStart, phraseTypingDuration,
     backdropColor,
   } = params;
 
-  // ffmpeg requiere prefijo `0x` en minusculas y hex en mayusculas
   const navyColor = `0x${backdropColor.replace('#', '').toUpperCase()}`;
-  const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
-  const fontFilePosix = fontFile.replace(/\\/g, '/');
-  const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
-  // Filter complex en una sola pasada:
-  // 1. Fondo navy solido del tamano del video (input 0 lavfi color)
-  // 2. Logo escalado (input 1 PNG)
-  // 3. Overlay del logo sobre el fondo
-  // 4. Drawtext de la frase cursiva
-  // Audio: input 2 lavfi anullsrc (silencio)
+  // Filter complex:
+  // - Input 0: fondo bg_gradient.png (loop)
+  // - Input 1: logo PNG (loop)
+  // - Input 2: frase PNG (loop)
+  // - Input 3: audio silencio
+  //
+  // Steps:
+  // 1. Escalar bg al tamano del video.
+  // 2. Logo: format=rgba, fade-in alpha en los primeros logo_fade_in_duration s.
+  // 3. Frase: format=rgba, crop horizontal dinamico segun t (typing).
+  // 4. Overlay logo sobre bg.
+  // 5. Overlay frase sobre lo anterior con enable= a partir de phrase_typing_start.
+  const typingEnd = phraseTypingStart + phraseTypingDuration;
   const filter = [
-    `[1:v]scale=${logoWidth}:-1[logo]`,
-    `[0:v][logo]overlay=x=(W-w)/2:y=${logoY}[withlogo]`,
-    `[withlogo]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=${phraseY},format=yuv420p[vout]`,
+    // Fondo
+    `[0:v]scale=${videoW}:${videoH}:force_original_aspect_ratio=increase,crop=${videoW}:${videoH},format=yuv420p[bg]`,
+    // Logo con fade-in alpha (0 → logoFadeInDuration)
+    `[1:v]scale=${logoWidth}:-1,format=rgba,fade=in:st=0:d=${logoFadeInDuration}:alpha=1[logo]`,
+    // Frase: crop dinamico para typing. w avanza de 0 a videoW entre typingStart y typingEnd.
+    `[2:v]format=rgba,crop=w='max(2,${videoW}*min(1,max(0,(t-${phraseTypingStart}))/${phraseTypingDuration}))':h=${phrasePngHeight}:x=0:y=0[phrase]`,
+    // Overlays
+    `[bg][logo]overlay=x=(W-w)/2:y=${logoY}:format=auto[withlogo]`,
+    `[withlogo][phrase]overlay=x=0:y=${phraseY}:enable='gte(t,${phraseTypingStart})':format=auto,format=yuv420p[vout]`,
   ].join(';');
 
   try {
     await runFfmpeg([
       '-y',
-      // Input 0: fondo navy solido durante `duration` segundos
-      '-f', 'lavfi',
+      // Input 0: bg_gradient.png loopeado por `duration` segundos
+      '-loop', '1',
       '-t', duration.toString(),
-      '-i', `color=c=${navyColor}:s=${videoW}x${videoH}:r=${fps}`,
-      // Input 1: logo PNG (loop necesario porque drawtext lo reusa)
+      '-i', bgPath,
+      // Input 1: logo PNG
       '-loop', '1',
       '-t', duration.toString(),
       '-i', originalLogoPath,
-      // Input 2: audio silencio
+      // Input 2: frase PNG
+      '-loop', '1',
+      '-t', duration.toString(),
+      '-i', phrasePngPath,
+      // Input 3: silencio
       '-f', 'lavfi',
       '-t', duration.toString(),
       '-i', 'anullsrc=channel_layout=mono:sample_rate=44100',
       '-filter_complex', filter,
       '-map', '[vout]',
-      '-map', '2:a',
+      '-map', '3:a',
       '-c:v', 'libx264',
       '-preset', preset,
       '-crf', crf.toString(),

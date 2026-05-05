@@ -548,25 +548,40 @@ async function applyOverlays(
 }
 
 /**
- * Concatena el video principal con el clip outro pre-renderizado usando
- * concat demuxer y `-c copy` (sin reencode, ~2 segundos). Requiere que
- * ambos clips tengan codec/profile/fps/sample_rate identicos.
+ * Concatena el video principal con el clip outro pre-renderizado aplicando
+ * xfade (transicion fade suave) entre ambos. Requiere reencode (no se puede
+ * aplicar xfade con concat demuxer + -c copy), pero solo es un encode rapido
+ * porque ambos inputs ya estan codificados.
+ *
+ * - mainDuration: duracion exacta del video principal (necesaria para offset)
+ * - transitionDuration: segundos del crossfade (default 0.5)
  */
-async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, sessionDir, logger) {
-  const listPath = path.join(sessionDir, 'concat_outro_list.txt');
-  // Las rutas dentro del fichero concat deben ser absolutas POSIX.
-  const mainPosix = mainVideoPath.replace(/\\/g, '/');
-  const outroPosix = outroClipPath.replace(/\\/g, '/');
-  await writeFile(listPath, `file '${mainPosix}'\nfile '${outroPosix}'\n`);
+async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDuration, transitionDuration, logger) {
+  // El xfade arranca en (mainDuration - transitionDuration) y dura
+  // transitionDuration segundos. El video resultante dura
+  // mainDuration + outroDuration - transitionDuration.
+  const offset = Math.max(0, mainDuration - transitionDuration);
+  const filter = [
+    `[0:v][1:v]xfade=transition=fade:duration=${transitionDuration}:offset=${offset.toFixed(3)}[v]`,
+    `[0:a][1:a]acrossfade=d=${transitionDuration}[a]`,
+  ].join(';');
   await runFfmpeg([
     '-y',
-    '-f', 'concat',
-    '-safe', '0',
-    '-i', listPath,
-    '-c', 'copy',
+    '-i', mainVideoPath,
+    '-i', outroClipPath,
+    '-filter_complex', filter,
+    '-map', '[v]',
+    '-map', '[a]',
+    '-c:v', 'libx264',
+    '-preset', BRAND.video.preset,
+    '-crf', BRAND.video.crf.toString(),
+    '-c:a', 'aac',
+    '-b:a', BRAND.video.audio_bitrate,
+    '-r', BRAND.video.fps.toString(),
+    '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     outputPath,
-  ], logger, 'concat-outro');
+  ], logger, 'concat-outro-xfade');
   return outputPath;
 }
 
@@ -787,11 +802,22 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     logger
   );
 
-  // Paso 5: si hay clip outro pre-renderizado, concat al final con `-c copy`
-  // (~2 segundos, no reencodea).
+  // Paso 5: si hay clip outro pre-renderizado, concat con xfade (transicion
+  // fade suave) entre el reel y el outro. Reencodea pero solo una pasada y
+  // bastante rapida porque ambos inputs ya estan codificados.
   if (useOutro) {
-    await concatWithOutro(mainVideoPath, outroClipPath, finalOutputPath, sessionDir, logger);
-    logger?.info?.({ outputPath: finalOutputPath, outroClipPath }, 'outro concatenated to main video');
+    const mainDuration = audioDurationProbed && audioDurationProbed > 0
+      ? audioDurationProbed
+      : audioDurations.reduce((acc, d) => acc + d, 0);
+    await concatWithOutro(
+      mainVideoPath,
+      outroClipPath,
+      finalOutputPath,
+      mainDuration,
+      BRAND.outro.transition_duration,
+      logger
+    );
+    logger?.info?.({ outputPath: finalOutputPath, outroClipPath, mainDuration }, 'outro xfade-concatenated to main video');
   }
   const outputPath = finalOutputPath;
 
