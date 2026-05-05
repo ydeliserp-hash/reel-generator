@@ -33,37 +33,34 @@ function runFfmpeg(args) {
  */
 async function bakePollinationsPatterns(patternsDir, w, h, logger) {
   const POLLINATIONS_TOKEN = process.env.POLLINATIONS_TOKEN || '';
+  // Set curado por la doctora: solo los patterns que mejor encajan con su
+  // estilo medico/tech. Originalmente eran 15 (plexus, hexagonos, ondas,
+  // etc.); estos 7 son los favoritos confirmados visualmente.
   const PATTERN_PROMPTS = [
     // 0 - Plexus / red de nodos conectados
     'minimalist plexus network of connected dots and bright thin lines floating in space, deep navy blue gradient background, cyan and electric blue accent dots, abstract tech aesthetic, minimal composition',
-    // 1 - Hexagonos
-    'abstract hexagonal mesh pattern, dark navy blue gradient background, soft emerald green and cyan outlines, glowing dots at vertices, geometric science wallpaper, minimalist',
-    // 2 - Ondas / lineas fluidas con dots
-    'flowing wave lines with bright dots and circuit board traces, deep navy gradient background, electric blue and white highlights, futuristic tech aesthetic',
-    // 3 - Constelacion
+    // 1 - Constelacion (originalmente idx 3)
     'constellation of connected stars and bright dots with thin white lines, deep navy night sky background, minimalist celestial pattern, soft glow',
-    // 4 - Poligonos / triangulos
+    // 2 - Poligonos / triangulos (originalmente idx 4)
     'abstract geometric polygon network triangles and dots, deep navy and teal gradient background, soft green and cyan accent lines, minimalist science visualization',
-    // 5 - Circuit board / placa de circuito
-    'minimalist circuit board pattern with thin glowing traces and small chip nodes, deep navy gradient background, electric blue and gold accent lines, technological wallpaper, clean composition',
-    // 6 - Holograma scan grid
-    'holographic scan grid with subtle perspective lines and floating data points, deep navy blue gradient background, cyan and teal glow, futuristic interface aesthetic, minimalist',
-    // 7 - ECG / electrocardiograma
-    'subtle electrocardiogram heartbeat lines flowing horizontally with small bright pulse points, deep navy gradient background, electric blue and emerald green waveforms, medical tech aesthetic, minimal',
-    // 8 - Particulas brillantes flotantes
+    // 3 - Particulas brillantes flotantes (originalmente idx 8)
     'soft floating particles and tiny glowing orbs scattered across deep navy gradient background, cyan and white bokeh accents, ethereal minimalist composition, abstract science wallpaper',
-    // 9 - Radar / circulos concentricos
-    'concentric circles radar pattern with thin glowing rings and small dots, deep navy blue gradient background, soft cyan and teal accents, sonar minimalist aesthetic',
-    // 10 - Grid 3D perspectiva
+    // 4 - Grid 3D perspectiva (originalmente idx 10)
     'subtle 3D perspective grid lines fading into distance with light points at intersections, deep navy gradient background, electric blue glow, retrofuturistic tech wallpaper, clean minimalist',
-    // 11 - Cadena ADN / helix
+    // 5 - Cadena ADN / helix (originalmente idx 11)
     'abstract DNA double helix pattern with connected dots and thin curved lines, deep navy gradient background, soft teal and cyan accents, biotech minimalist wallpaper',
-    // 12 - Curvas topograficas
-    'minimalist topographic contour lines flowing organically across deep navy gradient background, thin emerald green and gold accents, abstract map aesthetic, clean composition',
-    // 13 - Red neuronal multicapa
+    // 6 - Red neuronal multicapa (originalmente idx 13)
     'abstract neural network with layers of connected nodes and bright synaptic lines, deep navy blue gradient background, cyan and electric blue accents, AI science minimalist wallpaper',
-    // 14 - Ondas sonoras horizontales
-    'horizontal sound wave equalizer bars with soft glow and small dots, deep navy gradient background, teal and cyan vertical lines of varying height, audio tech minimalist aesthetic',
+    // 7 - Nebulosa cosmica con estrellas
+    'cosmic nebula with scattered bright stars and soft glowing dust clouds, deep navy and indigo space background, subtle cyan and white pinpoints, ethereal celestial wallpaper, minimalist',
+    // 8 - Estructura cristalina 3D
+    'abstract 3D crystal lattice structure with thin glowing edges and bright vertices, deep navy gradient background, soft teal and electric blue highlights, geometric biotech aesthetic, minimalist',
+    // 9 - Particulas bioluminiscentes flotando
+    'soft bioluminescent particles drifting in deep navy gradient space, glowing teal and emerald orbs of varying size, organic medical aesthetic, ethereal minimalist composition',
+    // 10 - Sinapsis fluidas con flow
+    'flowing synaptic connections with bright pulse points and curved thin lines, deep navy gradient background, electric blue and white glow, neural medical aesthetic, minimalist abstract',
+    // 11 - Estructura atomica con orbitales
+    'abstract atomic structure with elliptical orbital paths and bright nucleus points, deep navy gradient background, soft cyan and gold accents, scientific minimalist wallpaper',
   ];
 
   await mkdir(patternsDir, { recursive: true });
