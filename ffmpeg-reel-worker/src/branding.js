@@ -78,6 +78,12 @@ export const BRAND = {
     phrase_typing_start: 1.0,             // segundo en que arranca el typing
     phrase_typing_duration: 1.8,          // duracion del typing
     transition_duration: 0.5,             // segundos de xfade entre reel y outro
+    // Drop shadow detras del logo y del texto para legibilidad sobre cualquier
+    // pattern. Se aplica via boxblur del alpha + colorchannelmixer a negro.
+    shadow_offset_x: 6,
+    shadow_offset_y: 6,
+    shadow_blur: 14,
+    shadow_alpha: 0.65,
   },
   video: {
     width: 1080,

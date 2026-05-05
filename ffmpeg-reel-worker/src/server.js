@@ -31,7 +31,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { composeReel } from './compose.js';
-import { ensureGradientBackground, ensureResizedLogo, ensureOutroPhrasePng, ensureOutroClip } from './utils/background.js';
+import { ensureGradientBackground, ensureResizedLogo, ensureOutroPhrasePng, ensureOutroClipsForAllPatterns } from './utils/background.js';
 import { BRAND, pctY } from './branding.js';
 
 // ---------------------------------------------------------------------------
@@ -584,34 +584,48 @@ async function bootstrap() {
       phraseText: BRAND.outro.phrase_text,
       phraseFontSize: BRAND.outro.phrase_font_size,
       phraseColor: BRAND.outro.phrase_color,
+      shadowOffsetX: BRAND.outro.shadow_offset_x,
+      shadowOffsetY: BRAND.outro.shadow_offset_y,
+      shadowBlur: BRAND.outro.shadow_blur,
+      shadowAlpha: BRAND.outro.shadow_alpha,
     }, logger).catch((e) => {
       logger.warn({ err: e.message }, 'outro phrase PNG failed');
       return null;
     });
     if (phraseInfo) {
-      const outroClipPath = path.join(ASSETS_DIR, 'overlays', 'outro_clip.mp4');
-      await ensureOutroClip({
-        outputPath: outroClipPath,
-        videoW: BRAND.video.width,
-        videoH: BRAND.video.height,
-        fps: BRAND.video.fps,
-        duration: BRAND.outro.duration,
-        crf: BRAND.video.crf,
-        preset: BRAND.video.preset,
-        audioBitrate: BRAND.video.audio_bitrate,
-        bgPath: overlayPath,
-        originalLogoPath: resizedLogo,
-        phrasePngPath: phraseInfo.path,
-        phrasePngHeight: phraseInfo.height,
-        logoWidth: targetWidth,
-        logoY: pctY(BRAND.outro.logo_y_pct),
-        logoFadeInDuration: BRAND.outro.logo_fade_in_duration,
-        phraseY: pctY(BRAND.outro.phrase_y_pct),
-        phraseTypingStart: BRAND.outro.phrase_typing_start,
-        phraseTypingDuration: BRAND.outro.phrase_typing_duration,
-        backdropColor: BRAND.outro.backdrop_color,
-      }, logger).catch((e) => {
-        logger.warn({ err: e.message }, 'outro clip pre-render failed (reels saldran sin outro)');
+      // Genera UN outro_clip por pattern (continuidad visual con el reel).
+      // El path es {ASSETS_DIR}/overlays/patterns/outro_clip_N.mp4 — composeReel
+      // calcula N a partir del sessionBgPath y carga el correspondiente.
+      const patternsDir = path.join(ASSETS_DIR, 'overlays', 'patterns');
+      await ensureOutroClipsForAllPatterns(
+        {
+          videoW: BRAND.video.width,
+          videoH: BRAND.video.height,
+          fps: BRAND.video.fps,
+          duration: BRAND.outro.duration,
+          crf: BRAND.video.crf,
+          preset: BRAND.video.preset,
+          audioBitrate: BRAND.video.audio_bitrate,
+          originalLogoPath: resizedLogo,
+          phrasePngPath: phraseInfo.path,
+          phrasePngHeight: phraseInfo.height,
+          logoWidth: targetWidth,
+          logoY: pctY(BRAND.outro.logo_y_pct),
+          logoFadeInDuration: BRAND.outro.logo_fade_in_duration,
+          phraseY: pctY(BRAND.outro.phrase_y_pct),
+          phraseTypingStart: BRAND.outro.phrase_typing_start,
+          phraseTypingDuration: BRAND.outro.phrase_typing_duration,
+          backdropColor: BRAND.outro.backdrop_color,
+          shadowOffsetX: BRAND.outro.shadow_offset_x,
+          shadowOffsetY: BRAND.outro.shadow_offset_y,
+          shadowBlur: BRAND.outro.shadow_blur,
+          shadowAlpha: BRAND.outro.shadow_alpha,
+        },
+        patternsDir,
+        overlayPath,
+        logger
+      ).catch((e) => {
+        logger.warn({ err: e.message }, 'outro clips per-pattern failed (reels saldran sin outro)');
       });
     }
   }

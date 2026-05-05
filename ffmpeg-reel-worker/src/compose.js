@@ -771,19 +771,31 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // Paso 4: overlays + audio. Si hay outro habilitado y clip pre-renderizado,
   // applyOverlays escribe a main.mp4 y luego se concatena con el outro;
   // si no, escribe directo a output.mp4.
+  // El outro_clip que usamos corresponde al MISMO pattern del reel (continuidad
+  // visual). bootstrap pre-genero outro_clip_N.mp4 (uno por pattern); aqui
+  // elegimos N segun el sessionBgPath usado en phase 1.
   const finalOutputPath = path.join(sessionDir, 'output.mp4');
   let outroClipPath = null;
   if (BRAND.outro?.enabled) {
-    const candidate = path.join(
-      process.env.ASSETS_DIR || '/app/assets',
-      'overlays',
-      'outro_clip.mp4'
-    );
-    try {
-      await stat(candidate);
-      outroClipPath = candidate;
-    } catch {
-      logger?.warn?.('outro_clip.mp4 no existe, reel saldra sin outro');
+    // Extraer el indice del pattern del nombre del bg (bg_pattern_N.png → N).
+    const bgBaseName = path.basename(sessionBgPath);
+    const idxMatch = bgBaseName.match(/bg_pattern_(\d+)\.png$/);
+    const overlaysDir = path.join(process.env.ASSETS_DIR || '/app/assets', 'overlays');
+    const candidates = [];
+    if (idxMatch) {
+      candidates.push(path.join(overlaysDir, 'patterns', `outro_clip_${idxMatch[1]}.mp4`));
+    }
+    // Fallback si el bg no es uno de los patterns con outro pre-generado
+    candidates.push(path.join(overlaysDir, 'patterns', 'outro_clip_0.mp4'));
+    for (const c of candidates) {
+      try {
+        await stat(c);
+        outroClipPath = c;
+        break;
+      } catch { /* probar siguiente */ }
+    }
+    if (!outroClipPath) {
+      logger?.warn?.('ningun outro_clip pre-generado encontrado, reel saldra sin outro');
     }
   }
 

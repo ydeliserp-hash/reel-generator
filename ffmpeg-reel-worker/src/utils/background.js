@@ -186,25 +186,45 @@ export async function ensureGradientBackground(outputPath, logger) {
  * mismo ancho que el video (asi el centrado se hereda automaticamente al
  * overlayar). Lo usa ensureOutroClip para hacer el efecto typing via crop
  * dinamico (mas barato que apilar 50 drawtexts).
+ *
+ * Drop shadow integrado: el shadow se renderiza primero (texto en negro con
+ * boxblur) y luego el texto en color encima. Esto garantiza legibilidad
+ * sobre cualquier fondo.
  */
 export async function ensureOutroPhrasePng(params, logger) {
-  const { outputPath, videoW, fontFile, phraseText, phraseFontSize, phraseColor } = params;
+  const {
+    outputPath, videoW, fontFile, phraseText, phraseFontSize, phraseColor,
+    shadowOffsetX, shadowOffsetY, shadowBlur, shadowAlpha,
+  } = params;
   const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
   const fontFilePosix = fontFile.replace(/\\/g, '/');
   const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  // Alto del PNG: 1.6x el fontsize para dejar margen vertical (descenders, etc).
-  const phraseH = Math.round(phraseFontSize * 1.6);
+  // Alto del PNG: amplio para incluir el blur del shadow (puede salirse del
+  // texto). 2x el fontsize cubre fontsize + descender + blur sin recortar.
+  const phraseH = Math.round(phraseFontSize * 2);
+  // drawtext soporta shadowx/shadowy/shadowcolor nativamente. La sombra de
+  // drawtext NO esta blureada — para conseguir blur de verdad usamos un
+  // segundo drawtext en negro detras y le aplicamos boxblur, luego dibujamos
+  // el texto en blanco encima.
+  const shadowColor = `black@${shadowAlpha}`;
+  const filter = [
+    // Capa 1: sombra (texto en negro semitransparente, blureada)
+    `[0:v]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${shadowColor}:x=(w-text_w)/2+${shadowOffsetX}:y=(h-text_h)/2+${shadowOffsetY},boxblur=${shadowBlur}:1[shadow]`,
+    // Capa 2: texto en color encima
+    `[shadow]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=(h-text_h)/2,format=rgba[out]`,
+  ].join(';');
   try {
     await runFfmpeg([
       '-y',
       '-f', 'lavfi',
       '-i', `color=c=black@0:s=${videoW}x${phraseH}:r=1:d=1`,
-      '-vf', `drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=(h-text_h)/2,format=rgba`,
+      '-filter_complex', filter,
+      '-map', '[out]',
       '-frames:v', '1',
       outputPath,
     ]);
     const s = await stat(outputPath);
-    logger?.info?.({ outputPath, bytes: s.size, videoW, phraseH }, 'outro phrase PNG pre-rendered');
+    logger?.info?.({ outputPath, bytes: s.size, videoW, phraseH }, 'outro phrase PNG pre-rendered with shadow');
     return { path: outputPath, height: phraseH };
   } catch (e) {
     logger?.warn?.({ err: e.message }, 'outro phrase PNG pre-render failed');
@@ -234,29 +254,37 @@ export async function ensureOutroClip(params, logger) {
   } = params;
 
   const navyColor = `0x${backdropColor.replace('#', '').toUpperCase()}`;
+  const shadowOffsetX = params.shadowOffsetX ?? 6;
+  const shadowOffsetY = params.shadowOffsetY ?? 6;
+  const shadowBlur = params.shadowBlur ?? 14;
+  const shadowAlpha = params.shadowAlpha ?? 0.65;
 
   // Filter complex:
-  // - Input 0: fondo bg_gradient.png (loop)
+  // - Input 0: fondo (bg pattern del reel) (loop)
   // - Input 1: logo PNG (loop)
-  // - Input 2: frase PNG (loop)
+  // - Input 2: frase PNG (loop, ya con shadow integrado)
   // - Input 3: audio silencio
   //
-  // Steps:
-  // 1. Escalar bg al tamano del video.
-  // 2. Logo: format=rgba, fade-in alpha en los primeros logo_fade_in_duration s.
-  // 3. Frase: format=rgba, crop horizontal dinamico segun t (typing).
-  // 4. Overlay logo sobre bg.
-  // 5. Overlay frase sobre lo anterior con enable= a partir de phrase_typing_start.
+  // Drop shadow del logo: split del logo en 2 streams. Uno se convierte a
+  // negro (manteniendo alpha) y se aplica boxblur — esa es la sombra. Se
+  // overlayea con offset detras del logo original.
   const typingEnd = phraseTypingStart + phraseTypingDuration;
   const filter = [
-    // Fondo
+    // Fondo: escalar para llenar 1080x1350 manteniendo aspect ratio (cover)
     `[0:v]scale=${videoW}:${videoH}:force_original_aspect_ratio=increase,crop=${videoW}:${videoH},format=yuv420p[bg]`,
-    // Logo con fade-in alpha (0 → logoFadeInDuration)
-    `[1:v]scale=${logoWidth}:-1,format=rgba,fade=in:st=0:d=${logoFadeInDuration}:alpha=1[logo]`,
-    // Frase: crop dinamico para typing. w avanza de 0 a videoW entre typingStart y typingEnd.
+    // Logo: split en 2. shadow = negro + blur. logo_main = original con fade-in.
+    `[1:v]scale=${logoWidth}:-1,format=rgba,split=2[logo_pre_shadow][logo_pre_main]`,
+    // Generar shadow: colorchannelmixer pone RGB a 0 manteniendo alpha (siluetazo negro),
+    // luego boxblur lo difumina, luego ajustamos alpha multiplicando por shadowAlpha
+    // (via colorchannelmixer aa=shadowAlpha).
+    `[logo_pre_shadow]colorchannelmixer=rr=0:gg=0:bb=0:aa=${shadowAlpha},boxblur=${shadowBlur}:1[logo_shadow]`,
+    // Logo principal con fade-in
+    `[logo_pre_main]fade=in:st=0:d=${logoFadeInDuration}:alpha=1[logo_main]`,
+    // Frase: crop horizontal dinamico para efecto typing
     `[2:v]format=rgba,crop=w='max(2,${videoW}*min(1,max(0,(t-${phraseTypingStart}))/${phraseTypingDuration}))':h=${phrasePngHeight}:x=0:y=0[phrase]`,
-    // Overlays
-    `[bg][logo]overlay=x=(W-w)/2:y=${logoY}:format=auto[withlogo]`,
+    // Composicion: bg → shadow del logo (con offset) → logo encima → frase encima
+    `[bg][logo_shadow]overlay=x=(W-w)/2+${shadowOffsetX}:y=${logoY}+${shadowOffsetY}:format=auto[bg_with_shadow]`,
+    `[bg_with_shadow][logo_main]overlay=x=(W-w)/2:y=${logoY}:format=auto[withlogo]`,
     `[withlogo][phrase]overlay=x=0:y=${phraseY}:enable='gte(t,${phraseTypingStart})':format=auto,format=yuv420p[vout]`,
   ].join(';');
 
@@ -299,6 +327,38 @@ export async function ensureOutroClip(params, logger) {
     logger?.warn?.({ err: e.message }, 'outro clip pre-render failed, reels saldran sin outro');
     return null;
   }
+}
+
+/**
+ * Pre-genera UN outro_clip por cada pattern disponible. composeReel elige
+ * el que corresponde al pattern del reel actual, asi el outro tiene
+ * continuidad visual con el resto del video.
+ *
+ * Recibe los mismos params que ensureOutroClip pero sin bgPath ni outputPath
+ * (los calcula internamente para cada pattern).
+ *
+ * Devuelve un array con los paths de outro_clip generados (en el mismo orden
+ * que los patterns devueltos por listBackgroundPatterns).
+ */
+export async function ensureOutroClipsForAllPatterns(commonParams, patternsBaseDir, fallbackBgPath, logger) {
+  const patterns = await listBackgroundPatterns(fallbackBgPath, logger);
+  const generated = [];
+  for (let i = 0; i < patterns.length; i++) {
+    const bgPath = patterns[i];
+    const outroOutputPath = path.join(patternsBaseDir, `outro_clip_${i}.mp4`);
+    try {
+      const result = await ensureOutroClip({
+        ...commonParams,
+        bgPath,
+        outputPath: outroOutputPath,
+      }, logger);
+      if (result) generated.push(result);
+    } catch (e) {
+      logger?.warn?.({ idx: i, err: e.message }, 'outro clip generation failed for pattern');
+    }
+  }
+  logger?.info?.({ count: generated.length, total: patterns.length }, 'outro clips generated for patterns');
+  return generated;
 }
 
 /**
