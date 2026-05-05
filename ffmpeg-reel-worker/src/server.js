@@ -479,17 +479,15 @@ app.get('/patterns', async (req, res) => {
   const labels = [
     '0 - Plexus',
     '1 - Poligonos',
-    '2 - Particulas flotantes',
-    '3 - Grid 3D perspectiva',
-    '4 - ADN doble helice',
-    '5 - Red neuronal',
-    '6 - Particulas bioluminiscentes',
-    '7 - Sinapsis fluidas',
-    '8 - Lluvia digital tenue',
-    '9 - Malla organica curva',
-    '10 - Capas de ondas profundas',
-    '11 - Lineas topograficas suaves',
-    '12 - Constelacion tenue',
+    '2 - Grid 3D perspectiva',
+    '3 - ADN doble helice',
+    '4 - Particulas bioluminiscentes',
+    '5 - Sinapsis fluidas',
+    '6 - Lluvia digital tenue',
+    '7 - Malla organica curva',
+    '8 - Capas de ondas profundas',
+    '9 - Lineas topograficas suaves',
+    '10 - Constelacion tenue',
   ];
   const tiles = labels.map((label, idx) => `
     <figure>

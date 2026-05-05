@@ -43,27 +43,23 @@ async function bakePollinationsPatterns(patternsDir, w, h, logger) {
     'minimalist plexus network of connected dots and bright thin lines floating in space, deep navy blue gradient background, cyan and electric blue accent dots, abstract tech aesthetic, minimal composition',
     // 1 - Poligonos
     'abstract geometric polygon network triangles and dots, deep navy and teal gradient background, soft green and cyan accent lines, minimalist science visualization',
-    // 2 - Particulas flotantes
-    'soft floating particles and tiny glowing orbs scattered across deep navy gradient background, cyan and white bokeh accents, ethereal minimalist composition, abstract science wallpaper',
-    // 3 - Grid 3D perspectiva
+    // 2 - Grid 3D perspectiva
     'subtle 3D perspective grid lines fading into distance with light points at intersections, deep navy gradient background, electric blue glow, retrofuturistic tech wallpaper, clean minimalist',
-    // 4 - ADN doble helice
+    // 3 - ADN doble helice
     'abstract DNA double helix pattern with connected dots and thin curved lines, deep navy gradient background, soft teal and cyan accents, biotech minimalist wallpaper',
-    // 5 - Red neuronal
-    'abstract neural network with layers of connected nodes and bright synaptic lines, deep navy blue gradient background, cyan and electric blue accents, AI science minimalist wallpaper',
-    // 6 - Particulas bioluminiscentes
+    // 4 - Particulas bioluminiscentes
     'soft bioluminescent particles drifting in deep navy gradient space, glowing teal and emerald orbs of varying size, organic medical aesthetic, ethereal minimalist composition',
-    // 7 - Sinapsis fluidas
+    // 5 - Sinapsis fluidas
     'flowing synaptic connections with bright pulse points and curved thin lines, deep navy gradient background, electric blue and white glow, neural medical aesthetic, minimalist abstract',
-    // 8 - Lluvia digital tenue
+    // 6 - Lluvia digital tenue
     'soft vertical digital rain lines descending slowly with small dim dots, deep navy blue gradient background, muted teal-green accents, low contrast minimalist tech aesthetic, calm wallpaper',
-    // 9 - Malla organica curva
+    // 7 - Malla organica curva
     'soft organic curved mesh pattern with thin flowing lines and small subtle dim dots at intersections, deep navy and dark blue-green gradient background, muted teal accents, calm minimalist composition, low contrast',
-    // 10 - Capas de ondas profundas
+    // 8 - Capas de ondas profundas
     'overlapping deep wave layers with thin curved lines and small dim particles, deep navy and dark teal gradient, soft turquoise accents, low contrast minimalist abstract, oceanic depth wallpaper',
-    // 11 - Lineas topograficas suaves
+    // 9 - Lineas topograficas suaves
     'abstract topographic depth lines curving softly across the canvas with small subtle dim dots, deep midnight blue background with soft teal-green undertones, muted cyan accents, calm minimalist wallpaper, low contrast',
-    // 12 - Constelacion tenue
+    // 10 - Constelacion tenue
     'loose network of dim stars connected by thin soft lines, deep navy blue gradient with muted teal undertones, small low brightness dots, calm minimalist celestial aesthetic, low contrast wallpaper',
   ];
 
