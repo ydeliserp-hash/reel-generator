@@ -555,6 +555,14 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
+//
+// Estrategia: el server arranca a escuchar el puerto INMEDIATAMENTE para que
+// los healthchecks de EasyPanel pasen, y las tareas pesadas (generar 11
+// patterns + 11 outro_clips, ~2-3 minutos) se ejecutan en segundo plano.
+//
+// Si llega una request /compose mientras el bootstrap aun no terminado, el
+// codigo de compose hara fallback graceful (sin outro o con bg fallback)
+// porque cada paso es best-effort.
 async function bootstrap() {
   await mkdir(SESSIONS_ROOT, { recursive: true }).catch(() => {});
   // Bake gradient background (best-effort; el modulo cae a color solido si falla).
@@ -629,15 +637,18 @@ async function bootstrap() {
     }
   }
 
-  app.listen(PORT, () => {
-    logger.info(
-      { port: PORT, sessionsRoot: SESSIONS_ROOT, fontDir: FONT_DIR },
-      'ffmpeg-reel-worker listening'
-    );
-  });
+  logger.info('bootstrap completo (patterns + outro clips listos)');
 }
 
+// 1) Arrancar el server INMEDIATAMENTE (healthchecks pasan rapido).
+app.listen(PORT, () => {
+  logger.info(
+    { port: PORT, sessionsRoot: SESSIONS_ROOT, fontDir: FONT_DIR },
+    'ffmpeg-reel-worker listening (bootstrap en background)'
+  );
+});
+
+// 2) Lanzar bootstrap en segundo plano (no bloquea el listen).
 bootstrap().catch((e) => {
-  logger.fatal({ err: e.message }, 'bootstrap failed');
-  process.exit(1);
+  logger.error({ err: e.message }, 'bootstrap failed (worker sigue corriendo, reels pueden tener fallbacks)');
 });
