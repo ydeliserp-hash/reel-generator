@@ -185,70 +185,74 @@ export async function ensureGradientBackground(outputPath, logger) {
 }
 
 /**
- * Pre-renderiza el outro completo como UN SOLO PNG de WxH (mismo tamano que
- * el video final). Combina backdrop navy semitransparente + logo redimensionado
- * + frase cursiva en una sola capa. Asi applyOverlays solo necesita UN
- * filtro `overlay` con `enable=` en vez de cuatro filtros distintos
- * (drawbox + drawtext + scale + overlay), lo que reduce drasticamente el
- * tiempo de procesamiento del filter graph.
+ * Pre-renderiza un CLIP MP4 outro de duration segundos con fondo navy solido,
+ * logo centrado y frase cursiva. Audio de silencio. Mismos codec/fps/profile
+ * que el video principal para que concat demuxer pueda unir SIN reencodear.
  *
- * Devuelve el path del PNG generado, o null si falla.
+ * Se ejecuta UNA SOLA VEZ al arrancar el worker. composeReel concat este
+ * clip al final del video principal con `-c copy` (~2 segundos de coste).
+ *
+ * Devuelve el path del MP4 generado, o null si falla.
  */
-export async function ensureOutroOverlay(params, logger) {
+export async function ensureOutroClip(params, logger) {
   const {
-    outputPath, videoW, videoH, originalLogoPath, fontFile,
+    outputPath, videoW, videoH, fps, duration, crf, preset, audioBitrate,
+    originalLogoPath, fontFile,
     logoWidth, logoY, phraseText, phraseFontSize, phraseColor, phraseY,
-    backdropColor, backdropAlpha, backdropPadding,
+    backdropColor,
   } = params;
 
-  // Construir filtro: empezamos con un fondo transparente WxH, dibujamos
-  // el backdrop navy semitransparente, escalamos el logo y lo overlayeamos,
-  // y dibujamos el texto cursivo.
-  const backdropTop = Math.max(0, logoY - backdropPadding);
-  // No conocemos el alto exacto del logo escalado hasta runtime; aproximamos
-  // con un alto generoso (logoWidth * 0.6 = aspect ~5:3 que es lo del logo
-  // original). Luego phrase y backdrop padding inferior.
-  const approxLogoHeight = Math.round(logoWidth * 0.55);
-  const backdropBottom = Math.min(videoH, phraseY + phraseFontSize + backdropPadding);
-  const backdropX = backdropPadding;
-  const backdropW = videoW - 2 * backdropPadding;
-  const backdropH = backdropBottom - backdropTop;
-  // Importante: ffmpeg requiere prefijo `0x` en MINUSCULAS (acepta los hex
-  // RRGGBB en mayusculas). `0X` con X mayuscula da "Cannot find color".
-  const navyAlpha = `0x${backdropColor.replace('#', '').toUpperCase()}@${backdropAlpha}`;
+  // ffmpeg requiere prefijo `0x` en minusculas y hex en mayusculas
+  const navyColor = `0x${backdropColor.replace('#', '').toUpperCase()}`;
   const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
   const fontFilePosix = fontFile.replace(/\\/g, '/');
   const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 
+  // Filter complex en una sola pasada:
+  // 1. Fondo navy solido del tamano del video (input 0 lavfi color)
+  // 2. Logo escalado (input 1 PNG)
+  // 3. Overlay del logo sobre el fondo
+  // 4. Drawtext de la frase cursiva
+  // Audio: input 2 lavfi anullsrc (silencio)
   const filter = [
-    // Fondo transparente del tamano del video
-    `color=c=black@0:s=${videoW}x${videoH}:r=1:d=1[bg]`,
-    // Logo escalado
     `[1:v]scale=${logoWidth}:-1[logo]`,
-    // Sobre el bg, drawbox del backdrop navy
-    `[bg]drawbox=x=${backdropX}:y=${backdropTop}:w=${backdropW}:h=${backdropH}:color=${navyAlpha}:t=fill,format=rgba[withbox]`,
-    // Overlay del logo
-    `[withbox][logo]overlay=x=(W-w)/2:y=${logoY}[withlogo]`,
-    // Drawtext de la frase
-    `[withlogo]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=${phraseY}[out]`,
+    `[0:v][logo]overlay=x=(W-w)/2:y=${logoY}[withlogo]`,
+    `[withlogo]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=${phraseY},format=yuv420p[vout]`,
   ].join(';');
 
   try {
     await runFfmpeg([
       '-y',
+      // Input 0: fondo navy solido durante `duration` segundos
       '-f', 'lavfi',
-      '-i', `color=c=black@0:s=${videoW}x${videoH}:r=1:d=1`,
+      '-t', duration.toString(),
+      '-i', `color=c=${navyColor}:s=${videoW}x${videoH}:r=${fps}`,
+      // Input 1: logo PNG (loop necesario porque drawtext lo reusa)
+      '-loop', '1',
+      '-t', duration.toString(),
       '-i', originalLogoPath,
+      // Input 2: audio silencio
+      '-f', 'lavfi',
+      '-t', duration.toString(),
+      '-i', 'anullsrc=channel_layout=mono:sample_rate=44100',
       '-filter_complex', filter,
-      '-map', '[out]',
-      '-frames:v', '1',
+      '-map', '[vout]',
+      '-map', '2:a',
+      '-c:v', 'libx264',
+      '-preset', preset,
+      '-crf', crf.toString(),
+      '-r', fps.toString(),
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      '-b:a', audioBitrate,
+      '-movflags', '+faststart',
       outputPath,
     ]);
     const s = await stat(outputPath);
-    logger?.info?.({ outputPath, bytes: s.size, videoW, videoH }, 'outro overlay PNG pre-rendered');
+    logger?.info?.({ outputPath, bytes: s.size, duration, videoW, videoH }, 'outro clip MP4 pre-rendered');
     return outputPath;
   } catch (e) {
-    logger?.warn?.({ err: e.message }, 'outro overlay pre-render failed, fallback al overlay multi-filtro en runtime');
+    logger?.warn?.({ err: e.message }, 'outro clip pre-render failed, reels saldran sin outro');
     return null;
   }
 }

@@ -31,7 +31,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { composeReel } from './compose.js';
-import { ensureGradientBackground, ensureResizedLogo, ensureOutroOverlay } from './utils/background.js';
+import { ensureGradientBackground, ensureResizedLogo, ensureOutroClip } from './utils/background.js';
 import { BRAND, pctY } from './branding.js';
 
 // ---------------------------------------------------------------------------
@@ -497,10 +497,10 @@ async function bootstrap() {
     logger.warn({ err: e.message }, 'background bake failed (continuing with solid color)');
   });
 
-  // Pre-renderizar el outro completo como UN SOLO PNG (backdrop + logo +
-  // frase). Asi applyOverlays solo necesita un overlay con `enable=` en
-  // los ultimos 3s, en vez de 4 capas separadas. Reduce drasticamente el
-  // tiempo del filter graph en VPS limitados.
+  // Pre-renderizar el clip outro como MP4 completo (fondo navy + logo +
+  // frase + silencio) UNA VEZ al arrancar. composeReel concatena este clip
+  // al final del video principal con `-c copy` (sin reencode), evitando
+  // procesar overlay en cada frame del video.
   if (BRAND.outro?.enabled) {
     const originalLogo = path.join(ASSETS_DIR, 'overlays', BRAND.outro.logo_file);
     const resizedLogo = path.join(ASSETS_DIR, 'overlays', 'logo_firma_resized.png');
@@ -508,12 +508,17 @@ async function bootstrap() {
     await ensureResizedLogo(originalLogo, resizedLogo, targetWidth, logger).catch((e) => {
       logger.warn({ err: e.message }, 'logo resize failed (continuing with original)');
     });
-    const outroOverlayPath = path.join(ASSETS_DIR, 'overlays', 'outro_complete.png');
+    const outroClipPath = path.join(ASSETS_DIR, 'overlays', 'outro_clip.mp4');
     const cursiveFontFile = path.join(FONT_DIR, BRAND.fonts.file_cursive);
-    await ensureOutroOverlay({
-      outputPath: outroOverlayPath,
+    await ensureOutroClip({
+      outputPath: outroClipPath,
       videoW: BRAND.video.width,
       videoH: BRAND.video.height,
+      fps: BRAND.video.fps,
+      duration: BRAND.outro.duration,
+      crf: BRAND.video.crf,
+      preset: BRAND.video.preset,
+      audioBitrate: BRAND.video.audio_bitrate,
       originalLogoPath: resizedLogo,
       fontFile: cursiveFontFile,
       logoWidth: targetWidth,
@@ -523,10 +528,8 @@ async function bootstrap() {
       phraseColor: BRAND.outro.phrase_color,
       phraseY: pctY(BRAND.outro.phrase_y_pct),
       backdropColor: BRAND.outro.backdrop_color,
-      backdropAlpha: BRAND.outro.backdrop_alpha,
-      backdropPadding: BRAND.outro.backdrop_padding,
     }, logger).catch((e) => {
-      logger.warn({ err: e.message }, 'outro overlay pre-render failed (fallback a multi-filtro en runtime)');
+      logger.warn({ err: e.message }, 'outro clip pre-render failed (reels saldran sin outro)');
     });
   }
 

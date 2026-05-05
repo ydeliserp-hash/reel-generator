@@ -58,20 +58,18 @@ export const BRAND = {
     vertical_padding: 18,
     duration_default: 2.0,
   },
-  // Outro: overlay sobre los ULTIMOS 3s del video (la voz sigue), con caja
-  // navy semitransparente como difuminado de fondo, logo PNG centrado encima
-  // y frase cursiva con fade-in por opacidad.
+  // Outro: clip estatico de cierre (logo + frase) concatenado al final del
+  // reel. NO va como overlay sobre la voz, va como segmento extra final.
+  // Asi evitamos que ffmpeg procese un overlay en cada frame del video (lo
+  // que saturaba el VPS). Concat sin reencode tarda ~2s.
   outro: {
     // Se puede desactivar en runtime con OUTRO_ENABLED=false (sin redeploy de codigo).
     enabled: process.env.OUTRO_ENABLED !== 'false',
-    duration: 3.0,                        // segundos finales con outro visible
-    fade_in_duration: 1.0,                // segundos de fade-in del texto
+    duration: 8.0,                        // segundos del clip outro al final
     logo_file: 'logo_firma.png',          // en assets/overlays/
     logo_width_pct: 0.55,                 // ~600 px de ancho (sobre 1080)
     logo_y_pct: 0.32,                     // posicion vertical del logo
-    backdrop_color: '#0A1F3D',            // navy de marca
-    backdrop_alpha: 0.72,                 // opacidad del difuminado
-    backdrop_padding: 60,                 // padding interno del backdrop
+    backdrop_color: '#0A1F3D',            // navy de marca (fondo solido)
     phrase_text: 'La mejor medicina es una buena prevención',
     phrase_font_size: 72,
     phrase_color: '#FFFFFF',

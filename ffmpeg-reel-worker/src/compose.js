@@ -438,7 +438,6 @@ async function applyOverlays(
     titleBadge,
     fontDir,
     outputPath,
-    videoDurationTotal,
   },
   logger
 ) {
@@ -451,14 +450,7 @@ async function applyOverlays(
   // se ejecuta en Windows durante desarrollo local.
   const sigFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_signature);
   const titleFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_title);
-  const cursiveFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_cursive);
   const subtitlePathPosix = subtitlePath.replace(/\\/g, '/');
-
-  // Outro: 3s finales con caja navy semitransparente + logo PNG + frase cursiva.
-  // Calculamos el instante de inicio del outro para activar/desactivar capas.
-  const outroEnabled = !!(BRAND.outro?.enabled && videoDurationTotal && videoDurationTotal > BRAND.outro.duration);
-  const outroStart = outroEnabled ? videoDurationTotal - BRAND.outro.duration : null;
-  const fadeEnd = outroEnabled ? outroStart + BRAND.outro.fade_in_duration : null;
 
   const filters = [];
 
@@ -466,22 +458,20 @@ async function applyOverlays(
   filters.push(`ass='${escapeFilterSingleQuoted(subtitlePathPosix)}'`);
 
   // Capa 2: barra navy semitransparente al pie + firma centrada.
-  // Durante el outro la ocultamos para que el logo central protagonice.
-  const sigEnable = outroEnabled ? `:enable='lt(t,${outroStart.toFixed(3)})'` : '';
   filters.push(
-    `drawbox=x=0:y=${SIG_BAR_Y}:w=${BRAND.video.width}:h=${BRAND.signature.bar_height}:color=${sigBarColor}:t=fill${sigEnable}`
+    `drawbox=x=0:y=${SIG_BAR_Y}:w=${BRAND.video.width}:h=${BRAND.signature.bar_height}:color=${sigBarColor}:t=fill`
   );
   const sigTextY = SIG_BAR_Y + Math.round((BRAND.signature.bar_height - BRAND.signature.font_size) / 2) - 4;
-  const sigTextParts = [
-    `drawtext=fontfile='${escapeFilterSingleQuoted(sigFontFile)}'`,
-    `text='${escapeFilterSingleQuoted(signatureText || BRAND.signature.text)}'`,
-    `fontsize=${BRAND.signature.font_size}`,
-    `fontcolor=${sigTextColor}`,
-    'x=(w-text_w)/2',
-    `y=${sigTextY}`,
-  ];
-  if (outroEnabled) sigTextParts.push(`enable='lt(t,${outroStart.toFixed(3)})'`);
-  filters.push(sigTextParts.join(':'));
+  filters.push(
+    [
+      `drawtext=fontfile='${escapeFilterSingleQuoted(sigFontFile)}'`,
+      `text='${escapeFilterSingleQuoted(signatureText || BRAND.signature.text)}'`,
+      `fontsize=${BRAND.signature.font_size}`,
+      `fontcolor=${sigTextColor}`,
+      'x=(w-text_w)/2',
+      `y=${sigTextY}`,
+    ].join(':')
+  );
 
   // Capa 3 (opcional): badge titulo dorado.
   // Por defecto se muestra DURANTE TODO el video. Si titleBadge.duration es
@@ -533,49 +523,11 @@ async function applyOverlays(
 
   const vf = filters.join(',');
 
-  // Outro: si bootstrap pre-renderizo outro_complete.png (PNG WxH con
-  // backdrop + logo + frase ya combinados), aplicamos UN SOLO overlay con
-  // enable=. Mucho mas rapido que 4 filtros separados (drawbox + drawtext +
-  // scale + overlay), que es el cuello de botella confirmado en VPS.
-  let outroOverlayPath = null;
-  if (outroEnabled) {
-    const overlaysDir = path.posix.join(
-      (process.env.ASSETS_DIR || '/app/assets').replace(/\\/g, '/'),
-      'overlays'
-    );
-    const candidate = path.posix.join(overlaysDir, 'outro_complete.png');
-    try {
-      await stat(candidate);
-      outroOverlayPath = candidate;
-    } catch {
-      logger?.warn?.('outro_complete.png no existe, outro desactivado este reel');
-    }
-  }
-  const useOutro = !!outroOverlayPath;
-  let filterComplex;
-  if (useOutro) {
-    // Input 0 = video, input 1 = audio, input 2 = outro PNG (mismo tamano
-    // que el video, ya tiene backdrop + logo + frase combinados).
-    // Solo overlay con enable= (sin fade=alpha porque su evaluacion en
-    // cada frame del video saturaba CPU en VPS limitado).
-    filterComplex = [
-      `[0:v]${vf}[base]`,
-      `[base][2:v]overlay=x=0:y=0:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
-    ].join(';');
-  } else {
-    filterComplex = `[0:v]${vf}[v]`;
-  }
-
   const args = [
     '-y',
     '-i', videoPath,
     '-i', audioPath,
-  ];
-  if (useOutro) {
-    args.push('-loop', '1', '-i', outroOverlayPath);
-  }
-  args.push(
-    '-filter_complex', filterComplex,
+    '-filter_complex', `[0:v]${vf}[v]`,
     '-map', '[v]',
     '-map', '1:a',
     '-c:v', 'libx264',
@@ -590,8 +542,31 @@ async function applyOverlays(
     // siempre se reproduce hasta el final, aunque el video acabe antes
     // (en cuyo caso se queda en frame congelado el ultimo instante).
     outputPath,
-  );
+  ];
   await runFfmpeg(args, logger);
+  return outputPath;
+}
+
+/**
+ * Concatena el video principal con el clip outro pre-renderizado usando
+ * concat demuxer y `-c copy` (sin reencode, ~2 segundos). Requiere que
+ * ambos clips tengan codec/profile/fps/sample_rate identicos.
+ */
+async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, sessionDir, logger) {
+  const listPath = path.join(sessionDir, 'concat_outro_list.txt');
+  // Las rutas dentro del fichero concat deben ser absolutas POSIX.
+  const mainPosix = mainVideoPath.replace(/\\/g, '/');
+  const outroPosix = outroClipPath.replace(/\\/g, '/');
+  await writeFile(listPath, `file '${mainPosix}'\nfile '${outroPosix}'\n`);
+  await runFfmpeg([
+    '-y',
+    '-f', 'concat',
+    '-safe', '0',
+    '-i', listPath,
+    '-c', 'copy',
+    '-movflags', '+faststart',
+    outputPath,
+  ], logger, 'concat-outro');
   return outputPath;
 }
 
@@ -778,13 +753,27 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     logger
   );
 
-  // Paso 4: overlays + audio.
-  // videoDurationTotal = duracion final del video. La uso en applyOverlays
-  // para calcular el inicio del outro (T - 3s).
-  const videoDurationTotal = audioDurationProbed && audioDurationProbed > 0
-    ? audioDurationProbed
-    : audioDurations.reduce((acc, d) => acc + d, 0);
-  const outputPath = path.join(sessionDir, 'output.mp4');
+  // Paso 4: overlays + audio. Si hay outro habilitado y clip pre-renderizado,
+  // applyOverlays escribe a main.mp4 y luego se concatena con el outro;
+  // si no, escribe directo a output.mp4.
+  const finalOutputPath = path.join(sessionDir, 'output.mp4');
+  let outroClipPath = null;
+  if (BRAND.outro?.enabled) {
+    const candidate = path.join(
+      process.env.ASSETS_DIR || '/app/assets',
+      'overlays',
+      'outro_clip.mp4'
+    );
+    try {
+      await stat(candidate);
+      outroClipPath = candidate;
+    } catch {
+      logger?.warn?.('outro_clip.mp4 no existe, reel saldra sin outro');
+    }
+  }
+
+  const useOutro = !!outroClipPath;
+  const mainVideoPath = useOutro ? path.join(sessionDir, 'main.mp4') : finalOutputPath;
   await applyOverlays(
     {
       videoPath: concatPath,
@@ -793,11 +782,18 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       signatureText: spec.signature || BRAND.signature.text,
       titleBadge: spec.title_badge,
       fontDir,
-      outputPath,
-      videoDurationTotal,
+      outputPath: mainVideoPath,
     },
     logger
   );
+
+  // Paso 5: si hay clip outro pre-renderizado, concat al final con `-c copy`
+  // (~2 segundos, no reencodea).
+  if (useOutro) {
+    await concatWithOutro(mainVideoPath, outroClipPath, finalOutputPath, sessionDir, logger);
+    logger?.info?.({ outputPath: finalOutputPath, outroClipPath }, 'outro concatenated to main video');
+  }
+  const outputPath = finalOutputPath;
 
   const elapsedMs = Date.now() - t0;
   return {
