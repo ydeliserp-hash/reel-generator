@@ -471,6 +471,76 @@ app.get('/output/:sessionId', async (req, res) => {
   stream.pipe(res);
 });
 
+/**
+ * GET /patterns — pagina HTML con los 15 fondos disponibles para los reels.
+ * Util para inspeccionar visualmente cuales rotan y elegir favoritos.
+ */
+app.get('/patterns', async (req, res) => {
+  const labels = [
+    '0 - Plexus',
+    '1 - Hexagonos',
+    '2 - Ondas fluidas',
+    '3 - Constelacion',
+    '4 - Poligonos',
+    '5 - Circuit board',
+    '6 - Holograma scan',
+    '7 - ECG / heartbeat',
+    '8 - Particulas flotantes',
+    '9 - Radar concentrico',
+    '10 - Grid 3D perspectiva',
+    '11 - ADN doble helice',
+    '12 - Topografico',
+    '13 - Red neuronal',
+    '14 - Ondas sonoras',
+  ];
+  const tiles = labels.map((label, idx) => `
+    <figure>
+      <img src="/patterns/${idx}.png" alt="${label}" loading="lazy">
+      <figcaption>${label}</figcaption>
+    </figure>
+  `).join('');
+  const html = `<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<title>Fondos disponibles para reels</title>
+<style>
+  body { background:#0A1F3D; color:#fff; font-family: system-ui, sans-serif; margin:0; padding:24px; }
+  h1 { margin: 0 0 24px 0; font-size: 24px; }
+  .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+  figure { margin:0; background:#1B4F8C; border-radius: 8px; overflow:hidden; }
+  figure img { width:100%; height:auto; display:block; }
+  figcaption { padding: 10px 12px; font-size: 14px; color:#F1C40F; }
+</style>
+</head><body>
+<h1>Fondos disponibles para los reels (15)</h1>
+<div class="grid">${tiles}</div>
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+/**
+ * GET /patterns/:idx.png — sirve el PNG de un pattern especifico (0..14).
+ */
+app.get('/patterns/:idx.png', async (req, res) => {
+  const idx = parseInt(req.params.idx, 10);
+  if (!Number.isInteger(idx) || idx < 0 || idx > 99) {
+    return res.status(400).json({ error: 'invalid_idx' });
+  }
+  const patternPath = path.join(ASSETS_DIR, 'overlays', 'patterns', `bg_pattern_${idx}.png`);
+  let stat;
+  try {
+    const fs = await import('node:fs/promises');
+    stat = await fs.stat(patternPath);
+  } catch {
+    return res.status(404).json({ error: 'pattern_not_found', idx });
+  }
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Content-Length', String(stat.size));
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  createReadStream(patternPath).pipe(res);
+});
+
 // 404 catch-all
 app.use((req, res) => {
   res.status(404).json({ error: 'not_found', path: req.path });
