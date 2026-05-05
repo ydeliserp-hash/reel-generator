@@ -556,12 +556,11 @@ async function applyOverlays(
   if (useOutro) {
     // Input 0 = video, input 1 = audio, input 2 = outro PNG (mismo tamano
     // que el video, ya tiene backdrop + logo + frase combinados).
-    // Aplicamos fade-in alpha de fade_in_duration segundos al PNG entero.
-    const fadeDur = BRAND.outro.fade_in_duration;
+    // Solo overlay con enable= (sin fade=alpha porque su evaluacion en
+    // cada frame del video saturaba CPU en VPS limitado).
     filterComplex = [
       `[0:v]${vf}[base]`,
-      `[2:v]format=rgba,fade=in:st=${outroStart.toFixed(3)}:d=${fadeDur}:alpha=1[outro]`,
-      `[base][outro]overlay=x=0:y=0:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
+      `[base][2:v]overlay=x=0:y=0:enable='gte(t,${outroStart.toFixed(3)})'[v]`,
     ].join(';');
   } else {
     filterComplex = `[0:v]${vf}[v]`;
