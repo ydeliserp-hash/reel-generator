@@ -280,8 +280,8 @@ export async function ensureOutroClip(params, logger) {
     `[logo_pre_shadow]colorchannelmixer=rr=0:gg=0:bb=0:aa=${shadowAlpha},boxblur=${shadowBlur}:1[logo_shadow]`,
     // Logo principal con fade-in
     `[logo_pre_main]fade=in:st=0:d=${logoFadeInDuration}:alpha=1[logo_main]`,
-    // Frase: crop horizontal dinamico para efecto typing
-    `[2:v]format=rgba,crop=w='max(2,${videoW}*min(1,max(0,(t-${phraseTypingStart}))/${phraseTypingDuration}))':h=${phrasePngHeight}:x=0:y=0[phrase]`,
+    // Frase: fade-in alpha despues del logo (mas robusto que crop con expr)
+    `[2:v]format=rgba,fade=in:st=${phraseTypingStart}:d=${phraseTypingDuration}:alpha=1[phrase]`,
     // Composicion: bg → shadow del logo (con offset) → logo encima → frase encima
     `[bg][logo_shadow]overlay=x=(W-w)/2+${shadowOffsetX}:y=${logoY}+${shadowOffsetY}:format=auto[bg_with_shadow]`,
     `[bg_with_shadow][logo_main]overlay=x=(W-w)/2:y=${logoY}:format=auto[withlogo]`,
@@ -325,6 +325,12 @@ export async function ensureOutroClip(params, logger) {
     return outputPath;
   } catch (e) {
     logger?.warn?.({ err: e.message }, 'outro clip pre-render failed, reels saldran sin outro');
+    // Si quedo un archivo parcial corrupto (sin moov atom), borrarlo para que
+    // composeReel no lo intente usar.
+    try {
+      const { unlink } = await import('node:fs/promises');
+      await unlink(outputPath);
+    } catch { /* no existia o ya borrado */ }
     return null;
   }
 }

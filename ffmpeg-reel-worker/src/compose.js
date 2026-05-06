@@ -817,19 +817,26 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // Paso 5: si hay clip outro pre-renderizado, concat con xfade (transicion
   // fade suave) entre el reel y el outro. Reencodea pero solo una pasada y
   // bastante rapida porque ambos inputs ya estan codificados.
+  // Si el outro_clip esta corrupto (ej: bootstrap fallo a mitad), devolvemos
+  // el reel principal sin outro en vez de fallar con 500.
   if (useOutro) {
     const mainDuration = audioDurationProbed && audioDurationProbed > 0
       ? audioDurationProbed
       : audioDurations.reduce((acc, d) => acc + d, 0);
-    await concatWithOutro(
-      mainVideoPath,
-      outroClipPath,
-      finalOutputPath,
-      mainDuration,
-      BRAND.outro.transition_duration,
-      logger
-    );
-    logger?.info?.({ outputPath: finalOutputPath, outroClipPath, mainDuration }, 'outro xfade-concatenated to main video');
+    try {
+      await concatWithOutro(
+        mainVideoPath,
+        outroClipPath,
+        finalOutputPath,
+        mainDuration,
+        BRAND.outro.transition_duration,
+        logger
+      );
+      logger?.info?.({ outputPath: finalOutputPath, outroClipPath, mainDuration }, 'outro xfade-concatenated to main video');
+    } catch (concatErr) {
+      logger?.warn?.({ err: concatErr.message?.slice(0, 200), outroClipPath }, 'concat con outro fallo, devolviendo reel sin outro');
+      await copyFile(mainVideoPath, finalOutputPath);
+    }
   }
   const outputPath = finalOutputPath;
 
