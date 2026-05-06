@@ -211,7 +211,7 @@ export const BRAND = {
   background_music: {
     enabled: process.env.BACKGROUND_MUSIC_ENABLED !== 'false',
     music_dir: 'music',                  // dentro de assets/
-    volume: 0.10,                        // 0..1 (10% volumen, bajado para no tapar voz)
+    volume: 0.15,                        // 0..1 (15% volumen)
     voice_boost: 1.4,                    // multiplicador del volumen de la voz (1.0 = sin cambio)
     fade_in_duration: 1.0,               // segundos de fade-in al inicio
     fade_out_duration: 1.5,              // segundos de fade-out al final
