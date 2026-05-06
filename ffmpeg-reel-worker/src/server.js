@@ -472,6 +472,74 @@ app.get('/output/:sessionId', async (req, res) => {
 });
 
 /**
+ * GET /assets/:sessionId — devuelve JSON con la lista de assets generados
+ * (imagenes Gemini, fallbacks Pexels, etc.) en esa sesion. Cada asset
+ * incluye su filename, size y URL relativa para descargarlo via
+ * /assets/:sessionId/:filename.
+ *
+ * Util para que n8n descargue las imagenes y las suba a Google Drive antes
+ * de descargar el MP4 final (que trigger la limpieza de la sesion).
+ */
+app.get('/assets/:sessionId', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'invalid_session_id' });
+  }
+  const sessionDir = path.join(SESSIONS_ROOT, sessionId);
+  try {
+    const fs = await import('node:fs/promises');
+    const files = await fs.readdir(sessionDir);
+    // Filtramos a los assets de imagen/video que entraron como input para
+    // los segmentos (asset_NN.*, asset_NN_gemini.png, asset_NN_fb.jpg).
+    const assetFiles = files.filter((f) => /^asset_\d+(_gemini|_fb)?\.(png|jpg|jpeg|mp4)$/i.test(f));
+    const assets = await Promise.all(
+      assetFiles.map(async (filename) => {
+        const stat = await fs.stat(path.join(sessionDir, filename));
+        return {
+          filename,
+          size: stat.size,
+          url: `/assets/${sessionId}/${filename}`,
+        };
+      })
+    );
+    res.json({ session_id: sessionId, count: assets.length, assets });
+  } catch (e) {
+    return res.status(404).json({ error: 'session_not_found', session_id: sessionId });
+  }
+});
+
+/**
+ * GET /assets/:sessionId/:filename — sirve un asset individual de la sesion.
+ * No hace cleanup (eso lo hace /output/:sessionId al descargar el MP4).
+ */
+app.get('/assets/:sessionId/:filename', async (req, res) => {
+  const sessionId = req.params.sessionId;
+  const filename = req.params.filename;
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'invalid_session_id' });
+  }
+  // Bloquear path traversal: el filename solo puede tener caracteres seguros.
+  if (!/^[a-zA-Z0-9_.-]+$/.test(filename)) {
+    return res.status(400).json({ error: 'invalid_filename' });
+  }
+  const filePath = path.join(SESSIONS_ROOT, sessionId, filename);
+  let stat;
+  try {
+    const fs = await import('node:fs/promises');
+    stat = await fs.stat(filePath);
+  } catch {
+    return res.status(404).json({ error: 'asset_not_found', session_id: sessionId, filename });
+  }
+  // Content-Type segun extension
+  const ext = filename.split('.').pop().toLowerCase();
+  const mimeTypes = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', mp4: 'video/mp4' };
+  res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
+  res.setHeader('Content-Length', String(stat.size));
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  createReadStream(filePath).pipe(res);
+});
+
+/**
  * GET /patterns — pagina HTML con los 15 fondos disponibles para los reels.
  * Util para inspeccionar visualmente cuales rotan y elegir favoritos.
  */
