@@ -249,16 +249,21 @@ app.post('/compose', composeUpload, async (req, res) => {
         await fs.writeFile(audioFilePath, Buffer.from(body.audio_base64, 'base64'));
       }
 
-      // assets_base64 = { "0": "<b64>", "1": "<b64>", ... } (opcional)
+      // assets_base64 = { "0": "<b64>", "1": "<b64>", ... } (opcional, modo clasico)
+      // o tambien con claves compuestas para multi-asset por segmento (modo remix):
+      //   { "0_0": "<b64>", "0_1": "<b64>", "1_0": "<b64>", ... }
+      // donde "N_K" es el K-esimo asset del segmento N.
       if (body.assets_base64 && typeof body.assets_base64 === 'object') {
         const fs = await import('node:fs/promises');
-        for (const [idxStr, b64] of Object.entries(body.assets_base64)) {
-          const idx = parseInt(idxStr, 10);
-          if (!Number.isFinite(idx) || !b64) continue;
-          const ext = body.assets_filename?.[idxStr] ? path.extname(body.assets_filename[idxStr]) : '.bin';
-          const dest = path.join(sessionDir, `asset_inline_${String(idx).padStart(2, '0')}${ext || '.bin'}`);
+        for (const [keyStr, b64] of Object.entries(body.assets_base64)) {
+          if (!b64) continue;
+          const m = String(keyStr).match(/^(\d+)(?:_(\d+))?$/);
+          if (!m) continue;
+          const ext = body.assets_filename?.[keyStr] ? path.extname(body.assets_filename[keyStr]) : '.bin';
+          const safeKey = m[2] !== undefined ? `${m[1]}_${m[2]}` : m[1];
+          const dest = path.join(sessionDir, `asset_inline_${safeKey}${ext || '.bin'}`);
           await fs.writeFile(dest, Buffer.from(b64, 'base64'));
-          assetFilePaths[idx] = dest;
+          assetFilePaths[safeKey] = dest;
         }
       }
     }
