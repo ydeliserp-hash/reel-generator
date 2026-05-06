@@ -49,6 +49,10 @@ const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
 // URL del webhook de n8n al que el dashboard /upload reenvia el MP3.
 // Si no esta seteado, el dashboard muestra error al subir.
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || '';
+// URL del webhook REMIX (modo manual con imagenes propias). Si no esta
+// seteado, el dashboard cae al N8N_WEBHOOK_URL clasico (que generaria
+// imagenes con Gemini ignorando las que arrastraste).
+const N8N_REMIX_WEBHOOK_URL = process.env.N8N_REMIX_WEBHOOK_URL || '';
 
 const logger = pino({ level: LOG_LEVEL });
 const startedAt = Date.now();
@@ -755,6 +759,14 @@ app.post('/upload', dashboardUpload, async (req, res) => {
     return ai - bi;
   });
   const isRemixMode = imageFiles.length > 0;
+  // Eleccion de webhook: si hay imagenes (modo remix) y hay URL configurada,
+  // ir al workflow REMIX. En caso contrario, al workflow normal.
+  const targetWebhook = isRemixMode && N8N_REMIX_WEBHOOK_URL
+    ? N8N_REMIX_WEBHOOK_URL
+    : N8N_WEBHOOK_URL;
+  if (isRemixMode && !N8N_REMIX_WEBHOOK_URL) {
+    req.log.warn('Modo remix solicitado pero N8N_REMIX_WEBHOOK_URL no esta seteada — caigo al workflow normal (Gemini ignorara las imagenes)');
+  }
   const topic = (req.body?.topic || '').toString();
   const style = (req.body?.style || 'educational').toString();
   // El multer global usa diskStorage, asi que el archivo esta en .path
@@ -778,10 +790,10 @@ app.post('/upload', dashboardUpload, async (req, res) => {
     }
 
     req.log.info(
-      { topic, audioName, audioBytes: audioBuffer.length, remix: isRemixMode, imagesCount: imageFiles.length },
+      { topic, audioName, audioBytes: audioBuffer.length, remix: isRemixMode, imagesCount: imageFiles.length, targetWebhook },
       'forwarding upload to n8n webhook'
     );
-    const upstream = await fetch(N8N_WEBHOOK_URL, {
+    const upstream = await fetch(targetWebhook, {
       method: 'POST',
       body: form,
     });
