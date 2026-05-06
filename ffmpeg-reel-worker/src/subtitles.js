@@ -16,32 +16,56 @@ import { writeFile } from 'node:fs/promises';
 import { BRAND, assColor, assColorInline, pctY } from './branding.js';
 
 /**
- * Construye un regex que matchea cualquier palabra de `keywords` (case
- * insensitive, respetando acentos y bordes de palabra unicode).
+ * Construye un regex combinado que matchea (a) cualquier keyword de la
+ * lista o (b) cualquier numero (%, decimales, cifras). Capture groups:
+ *   1 -> keyword
+ *   2 -> numero
  *
- * Usa lookbehind/lookahead unicode (`\p{L}`) en lugar de `\b` porque `\b`
- * en JS no maneja bien letras con tilde.
+ * - Keywords: case insensitive, respetando acentos via \p{L}
+ * - Numeros: digitos 1-4 con decimal opcional (.,) y % opcional, NO
+ *   precedidos/seguidos de letra/digito (evita matchear partes de "B12"
+ *   o anios pegados a otro numero).
  */
-function buildKeywordRegex(keywords) {
-  if (!Array.isArray(keywords) || keywords.length === 0) return null;
-  const escaped = keywords
+function buildHighlightRegex(keywords) {
+  const escapedKeywords = (Array.isArray(keywords) ? keywords : [])
     .map((k) => String(k).trim())
     .filter(Boolean)
     .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  if (escaped.length === 0) return null;
-  // Sin lookbehind/lookahead de letra: matchea palabras con bordes naturales.
-  // Usamos \p{L} unicode property (requiere flag u).
-  return new RegExp(`(?<!\\p{L})(${escaped.join('|')})(?!\\p{L})`, 'giu');
+
+  // Numero: 1-4 digitos con coma/punto decimal opcional + % opcional.
+  // No precedido/seguido de letra ni digito.
+  const numberPattern = `(?<![\\p{L}\\d])\\d{1,4}(?:[.,]\\d{1,3})?%?(?![\\p{L}\\d])`;
+
+  const parts = [];
+  if (escapedKeywords.length > 0) {
+    parts.push(`(?<!\\p{L})(${escapedKeywords.join('|')})(?!\\p{L})`);
+  }
+  parts.push(`(${numberPattern})`);
+
+  return new RegExp(parts.join('|'), 'giu');
 }
 
 /**
- * Envuelve cada match de keyword con tags ASS de color (\c&Hcolor&...\c&Hwhite&).
- * El input ya viene escapado por escapeAssText, asi los tags `{\c...}` que
- * inyectamos se interpretan como tags ASS (no escapados).
+ * Aplica highlight ASS al texto envolviendo keywords y numeros con tags
+ * de color. Acepta un Set `alreadyHighlighted` que controla dedupe
+ * a nivel de reel: cada keyword (en lowercase) solo se resalta UNA vez.
+ * Los numeros se resaltan SIEMPRE (no entran en dedupe).
  */
-function highlightKeywordsInAss(escapedText, regex, highlightColorTag, defaultColorTag) {
+function highlightKeywordsInAss(escapedText, regex, highlightColorTag, defaultColorTag, alreadyHighlighted) {
   if (!regex) return escapedText;
-  return escapedText.replace(regex, `{\\c${highlightColorTag}}$1{\\c${defaultColorTag}}`);
+  const wrap = (txt) => `{\\c${highlightColorTag}}${txt}{\\c${defaultColorTag}}`;
+  return escapedText.replace(regex, (match, keyword, number) => {
+    if (keyword) {
+      const norm = keyword.toLowerCase();
+      if (alreadyHighlighted && alreadyHighlighted.has(norm)) return match;
+      if (alreadyHighlighted) alreadyHighlighted.add(norm);
+      return wrap(keyword);
+    }
+    if (number) {
+      return wrap(number);
+    }
+    return match;
+  });
 }
 
 /**
@@ -134,7 +158,8 @@ function buildDialogueLine(start, end, text, highlightCtx) {
       escaped,
       highlightCtx.regex,
       highlightCtx.highlightColorTag,
-      highlightCtx.defaultColorTag
+      highlightCtx.defaultColorTag,
+      highlightCtx.alreadyHighlighted
     );
   }
   return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${escaped}`;
@@ -178,17 +203,16 @@ export function buildAssContent(segments) {
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
-  // Preparar contexto de highlight para keywords. Si no hay keywords
-  // configuradas, highlightCtx queda null y los subtitulos salen blancos
-  // como antes.
+  // Contexto de highlight: keywords + numeros (estadisticas, %, cifras).
+  // alreadyHighlighted es un Set compartido por todo el reel para que cada
+  // keyword se resalte SOLO la primera vez que aparece. Numeros siempre.
   const keywords = BRAND.subtitle?.highlight_keywords || [];
-  const highlightCtx = keywords.length > 0
-    ? {
-        regex: buildKeywordRegex(keywords),
-        highlightColorTag: assColorInline(BRAND.subtitle.highlight_color || BRAND.colors.accent_gold),
-        defaultColorTag: assColorInline(BRAND.colors.text_primary),
-      }
-    : null;
+  const highlightCtx = {
+    regex: buildHighlightRegex(keywords),
+    highlightColorTag: assColorInline(BRAND.subtitle.highlight_color || BRAND.colors.accent_gold),
+    defaultColorTag: assColorInline(BRAND.colors.text_primary),
+    alreadyHighlighted: new Set(),
+  };
 
   const events = [];
   for (const seg of segments) {

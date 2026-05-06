@@ -81,7 +81,7 @@ export const BRAND = {
 
       // ===== RIESGO / HABITOS =====
       'prevención', 'prevencion', 'primaria', 'secundaria',
-      'riesgo', 'factor', 'SCORE',
+      'factor', 'SCORE',
       'alcohol', 'etanol',
       'tabaco', 'fumar', 'fumador', 'nicotina', 'cigarrillo',
       'vapeo', 'vapear', 'vaper', 'e-cigarrillo',
