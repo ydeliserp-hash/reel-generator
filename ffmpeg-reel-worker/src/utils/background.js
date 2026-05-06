@@ -199,7 +199,7 @@ export async function ensureOutroClip(params, logger) {
     outputPath, videoW, videoH, fps, duration, crf, preset, audioBitrate,
     bgPath, originalLogoPath, sloganPath,
     logoWidth, logoCenterY, logoFadeInDuration,
-    sloganWidth, sloganCenterY, sloganFadeInStart, sloganFadeInDuration,
+    sloganFadeInStart, sloganFadeInDuration,
     backdropColor,
   } = params;
 
@@ -229,12 +229,13 @@ export async function ensureOutroClip(params, logger) {
     `[1:v]scale=${logoWidth}:-1,format=rgba,split=2[logo_pre_shadow][logo_pre_main]`,
     `[logo_pre_shadow]colorchannelmixer=rr=0:gg=0:bb=0:aa=${shadowAlpha},boxblur=${shadowBlur}:1[logo_shadow]`,
     `[logo_pre_main]fade=in:st=0:d=${logoFadeInDuration}:alpha=1[logo_main]`,
-    // Slogan: scale + fade-in alpha (sin shadow extra, asume diseno propio)
-    `[2:v]scale=${sloganWidth}:-1,format=rgba,fade=in:st=${sloganFadeInStart}:d=${sloganFadeInDuration}:alpha=1[slogan]`,
+    // Slogan: PNG fullscreen (mismo tamano que el video) con fade-in alpha
+    // — diseno y posicion del texto van dentro del propio PNG.
+    `[2:v]format=rgba,fade=in:st=${sloganFadeInStart}:d=${sloganFadeInDuration}:alpha=1[slogan]`,
     // Composicion: bg → shadow logo (con offset) → logo → slogan
     `[bg][logo_shadow]overlay=x=(W-w)/2+${shadowOffsetX}:y=${logoCenterY}-h/2+${shadowOffsetY}:format=auto[bg_with_shadow]`,
     `[bg_with_shadow][logo_main]overlay=x=(W-w)/2:y=${logoCenterY}-h/2:format=auto[withlogo]`,
-    `[withlogo][slogan]overlay=x=(W-w)/2:y=${sloganCenterY}-h/2:enable='gte(t,${sloganFadeInStart})':format=auto,format=yuv420p[vout]`,
+    `[withlogo][slogan]overlay=x=0:y=0:enable='gte(t,${sloganFadeInStart})':format=auto,format=yuv420p[vout]`,
   ].join(';');
 
   try {

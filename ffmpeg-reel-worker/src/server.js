@@ -611,8 +611,6 @@ async function bootstrap() {
           logoWidth: targetWidth,
           logoCenterY: pctY(BRAND.outro.logo_y_pct),
           logoFadeInDuration: BRAND.outro.logo_fade_in_duration,
-          sloganWidth: Math.round(BRAND.video.width * BRAND.outro.slogan_width_pct),
-          sloganCenterY: pctY(BRAND.outro.slogan_y_pct),
           sloganFadeInStart: BRAND.outro.slogan_fade_in_start,
           sloganFadeInDuration: BRAND.outro.slogan_fade_in_duration,
           backdropColor: BRAND.outro.backdrop_color,

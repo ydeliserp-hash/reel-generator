@@ -72,11 +72,11 @@ export const BRAND = {
     logo_fade_in_duration: 0.7,           // segundos de fade-in del logo
     backdrop_color: '#0A1F3D',            // navy de marca (fallback)
     // Slogan: PNG pre-disenado por la doctora (slogan_reel.png en assets/overlays/).
-    // Se overlayea con fade-in. Si no existe el archivo, el outro se genera
+    // El PNG debe ser del MISMO tamano que el video (1080x1350) — se overlay
+    // tal cual en (0,0) sin escalar. El layout/posicion del texto va dentro
+    // del PNG, no en el config. Si no existe el archivo, el outro se genera
     // sin slogan (solo logo).
     slogan_file: 'slogan_reel.png',
-    slogan_width_pct: 0.85,               // ~918 px de ancho
-    slogan_y_pct: 0.62,                   // CENTRO vertical del slogan (~837 px = 3/4 inferior)
     slogan_fade_in_start: 1.0,            // segundo en que empieza el fade-in del slogan
     slogan_fade_in_duration: 1.0,         // duracion del fade-in
     transition_duration: 0.5,             // segundos de xfade entre reel y outro
