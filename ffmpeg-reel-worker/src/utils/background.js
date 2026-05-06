@@ -199,27 +199,20 @@ export async function ensureOutroPhrasePng(params, logger) {
   const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
   const fontFilePosix = fontFile.replace(/\\/g, '/');
   const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  // Alto del PNG: amplio para incluir el blur del shadow (puede salirse del
-  // texto). 2x el fontsize cubre fontsize + descender + blur sin recortar.
-  const phraseH = Math.round(phraseFontSize * 2);
-  // drawtext soporta shadowx/shadowy/shadowcolor nativamente. La sombra de
-  // drawtext NO esta blureada — para conseguir blur de verdad usamos un
-  // segundo drawtext en negro detras y le aplicamos boxblur, luego dibujamos
-  // el texto en blanco encima.
-  const shadowColor = `black@${shadowAlpha}`;
-  const filter = [
-    // Capa 1: sombra (texto en negro semitransparente, blureada)
-    `[0:v]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${shadowColor}:x=(w-text_w)/2+${shadowOffsetX}:y=(h-text_h)/2+${shadowOffsetY},boxblur=${shadowBlur}:1[shadow]`,
-    // Capa 2: texto en color encima
-    `[shadow]drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:x=(w-text_w)/2:y=(h-text_h)/2,format=rgba[out]`,
-  ].join(';');
+  // Alto del PNG: 1.6x el fontsize cubre fontsize + descender + sombra sin
+  // recortar. Antes era 2x para el blur, pero ahora la sombra no se blurea.
+  const phraseH = Math.round(phraseFontSize * 1.6);
+  // Usamos shadowx/shadowy/shadowcolor NATIVOS de drawtext en vez de un
+  // segundo drawtext + boxblur. Asi la sombra se renderiza solo bajo cada
+  // glifo (no crea bandas oscuras horizontales como hacia el blur del fondo
+  // transparente al difuminarse).
+  const shadowColorArg = `black@${shadowAlpha}`;
   try {
     await runFfmpeg([
       '-y',
       '-f', 'lavfi',
       '-i', `color=c=black@0:s=${videoW}x${phraseH}:r=1:d=1`,
-      '-filter_complex', filter,
-      '-map', '[out]',
+      '-vf', `drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:shadowcolor=${shadowColorArg}:shadowx=${shadowOffsetX}:shadowy=${shadowOffsetY}:x=(w-text_w)/2:y=(h-text_h)/2,format=rgba`,
       '-frames:v', '1',
       outputPath,
     ]);
@@ -368,22 +361,26 @@ export async function ensureOutroClipsForAllPatterns(commonParams, patternsBaseD
 }
 
 /**
- * Pre-redimensiona el logo del outro a su tamano final (594 px de ancho)
- * UNA SOLA VEZ al arrancar el worker. Asi FFmpeg no tiene que decodificar
- * el PNG original (~2870x1472, ~5MB) ni reescalarlo cada frame del video.
- * Si el redimensionado falla, devuelve null y compose.js usara el original.
+ * Pre-redimensiona el logo del outro a su tamano final (594 px de ancho).
+ * Si el PNG original tiene un patron de cuadritos blancos+grises baked
+ * (representacion visual de transparencia que se quedo pintada en el
+ * archivo), aplicamos `colorkey` para hacerlos transparentes:
+ *   - colorkey blanco con tolerancia media: elimina los cuadros blancos
+ *   - colorkey gris claro con tolerancia menor: elimina los cuadros grises
+ * Si el logo tiene blancos legitimos (texto blanco, etc) podrian volverse
+ * transparentes — en tal caso, mejor re-exportar el PNG sin checkerboard.
  */
 export async function ensureResizedLogo(originalLogoPath, resizedLogoPath, targetWidth, logger) {
   try {
     await runFfmpeg([
       '-y',
       '-i', originalLogoPath,
-      '-vf', `scale=${targetWidth}:-1:flags=lanczos`,
+      '-vf', `scale=${targetWidth}:-1:flags=lanczos,format=rgba,colorkey=0xFFFFFF:0.18:0.05,colorkey=0xCCCCCC:0.15:0.05`,
       '-frames:v', '1',
       resizedLogoPath,
     ]);
     const s = await stat(resizedLogoPath);
-    logger?.info?.({ resizedLogoPath, bytes: s.size, targetWidth }, 'logo resized for outro');
+    logger?.info?.({ resizedLogoPath, bytes: s.size, targetWidth }, 'logo resized + checkerboard removed');
     return resizedLogoPath;
   } catch (e) {
     logger?.warn?.({ err: e.message }, 'logo resize failed, compose usara el PNG original');
