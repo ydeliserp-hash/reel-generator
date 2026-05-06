@@ -112,11 +112,29 @@ function validateSpec(spec, { hasUploadedAudio = false } = {}) {
     if (typeof s.subtitle_text !== 'string') {
       throw new Error(`segment ${i}: subtitle_text must be a string`);
     }
-    if (!s.asset || typeof s.asset !== 'object') {
-      throw new Error(`segment ${i}: asset object is required`);
-    }
-    if (!['image', 'video'].includes(s.asset.type)) {
-      throw new Error(`segment ${i}: asset.type must be 'image' or 'video'`);
+    // Acepta `asset` (singular, formato clasico) o `assets` (array, modo
+    // remix donde un segmento largo puede tener varias imagenes que se
+    // alternan con xfade interno).
+    if (Array.isArray(s.assets)) {
+      if (s.assets.length === 0) {
+        throw new Error(`segment ${i}: assets array cannot be empty`);
+      }
+      for (let k = 0; k < s.assets.length; k++) {
+        const a = s.assets[k];
+        if (!a || typeof a !== 'object') {
+          throw new Error(`segment ${i}: assets[${k}] must be an object`);
+        }
+        if (!['image', 'video'].includes(a.type)) {
+          throw new Error(`segment ${i}: assets[${k}].type must be 'image' or 'video'`);
+        }
+      }
+    } else {
+      if (!s.asset || typeof s.asset !== 'object') {
+        throw new Error(`segment ${i}: asset object (or assets[]) is required`);
+      }
+      if (!['image', 'video'].includes(s.asset.type)) {
+        throw new Error(`segment ${i}: asset.type must be 'image' or 'video'`);
+      }
     }
     // asset.url puede faltar si se subio asset_N como fichero — esa
     // sustitucion la verificara composeReel via assetFilePaths.
@@ -198,8 +216,18 @@ app.post('/compose', composeUpload, async (req, res) => {
         if (f.fieldname === 'audio') {
           audioFilePath = f.path;
         } else if (f.fieldname.startsWith('asset_')) {
-          const idx = parseInt(f.fieldname.slice('asset_'.length), 10);
-          if (Number.isFinite(idx)) assetFilePaths[idx] = f.path;
+          // Acepta dos formatos:
+          //   asset_N      -> assetFilePaths[N]      (modo clasico, 1 asset por segmento)
+          //   asset_N_K    -> assetFilePaths['N_K']  (modo remix, K-esimo asset del segmento N)
+          const m = f.fieldname.match(/^asset_(\d+)(?:_(\d+))?$/);
+          if (m) {
+            if (m[2] === undefined) {
+              const idx = parseInt(m[1], 10);
+              if (Number.isFinite(idx)) assetFilePaths[idx] = f.path;
+            } else {
+              assetFilePaths[`${m[1]}_${m[2]}`] = f.path;
+            }
+          }
         }
       }
     } else {
@@ -541,6 +569,13 @@ app.get(['/', '/upload'], async (_req, res) => {
       <input type="text" id="style" name="style" placeholder="educational" value="educational">
     </label>
 
+    <label class="drop" id="dropImgs" style="border-color:rgba(241,196,15,0.35)">
+      <strong style="color:#F1C40F">Imágenes propias (opcional — modo remix)</strong>
+      <p>Arrastra varias imágenes desde tu carpeta local. Si vacío, se generan con IA.</p>
+      <div class="file" id="imgsCount" style="color:#F1C40F"></div>
+      <input type="file" id="imgs" name="imgs" accept="image/png,image/jpeg,image/jpg,image/webp" multiple>
+    </label>
+
     <button type="submit" id="submit">Generar reel</button>
   </form>
 
@@ -588,6 +623,35 @@ function showFilename(){
   }
 }
 
+// Dropzone secundaria: imagenes propias (modo remix). Drag desde local
+// (carpeta de descargas, etc.). Multiples archivos. Solo imagenes.
+const dropImgs = document.getElementById('dropImgs');
+const imgsIn = document.getElementById('imgs');
+const imgsCount = document.getElementById('imgsCount');
+['dragover','dragenter'].forEach(e=>dropImgs.addEventListener(e,ev=>{ev.preventDefault();dropImgs.classList.add('drag')}));
+['dragleave','drop'].forEach(e=>dropImgs.addEventListener(e,()=>dropImgs.classList.remove('drag')));
+dropImgs.addEventListener('drop',ev=>{
+  ev.preventDefault();
+  if(ev.dataTransfer.files && ev.dataTransfer.files.length>0){
+    // Filtrar solo imagenes
+    const accepted=Array.from(ev.dataTransfer.files).filter(f=>/^image\\//.test(f.type));
+    const dt=new DataTransfer();
+    accepted.forEach(f=>dt.items.add(f));
+    imgsIn.files=dt.files;
+    showImgsCount();
+  }
+});
+imgsIn.addEventListener('change', showImgsCount);
+function showImgsCount(){
+  const n=imgsIn.files?imgsIn.files.length:0;
+  if(n>0){
+    imgsCount.textContent='📷 '+n+' imagen'+(n>1?'es':'')+' seleccionada'+(n>1?'s':'')+' (modo REMIX)';
+    imgsCount.style.display='block';
+  }else{
+    imgsCount.style.display='none';
+  }
+}
+
 const stages=[
   [0,'Subiendo audio…'],
   [10,'Transcribiendo con Whisper…'],
@@ -617,6 +681,11 @@ form.addEventListener('submit', async ev=>{
   fd.append('audio',audioIn.files[0]);
   fd.append('topic',document.getElementById('topic').value);
   fd.append('style',document.getElementById('style').value||'educational');
+  // Modo remix: anadir imagenes propias si las hay (campos image_0..image_N)
+  if(imgsIn.files && imgsIn.files.length>0){
+    Array.from(imgsIn.files).forEach((f,i)=>fd.append('image_'+i,f,f.name));
+    fd.append('remix','1');
+  }
 
   const t0=Date.now();
   const tick=setInterval(()=>{
@@ -658,33 +727,55 @@ form.addEventListener('submit', async ev=>{
 
 /**
  * POST /upload — proxy del dashboard al webhook de n8n.
- * Recibe multipart con audio + topic + style, lo reenvia a N8N_WEBHOOK_URL,
- * y streamea la respuesta (MP4 binario) al navegador.
+ * Recibe multipart con audio + topic + style + (opcional) image_0..image_N
+ * para modo remix. Reenvia todo a N8N_WEBHOOK_URL y streamea la respuesta
+ * (MP4 binario) al navegador.
  */
-const dashboardUpload = upload.single('audio');
+// upload.any() permite que vengan audio + image_N junto. Multer pone los
+// archivos en req.files (array), no en req.file.
+const dashboardUpload = upload.any();
 app.post('/upload', dashboardUpload, async (req, res) => {
   if (!N8N_WEBHOOK_URL) {
     return res.status(503).json({ error: 'n8n_webhook_not_configured', message: 'Set N8N_WEBHOOK_URL env var' });
   }
-  if (!req.file) {
+  const audioFile = (req.files || []).find((f) => f.fieldname === 'audio');
+  if (!audioFile) {
     return res.status(400).json({ error: 'no_audio_file' });
   }
+  const imageFiles = (req.files || []).filter((f) => /^image_\d+$/.test(f.fieldname));
+  // Ordenar por indice numerico para preservar el orden del usuario
+  imageFiles.sort((a, b) => {
+    const ai = parseInt(a.fieldname.slice('image_'.length), 10);
+    const bi = parseInt(b.fieldname.slice('image_'.length), 10);
+    return ai - bi;
+  });
+  const isRemixMode = imageFiles.length > 0;
   const topic = (req.body?.topic || '').toString();
   const style = (req.body?.style || 'educational').toString();
-  // El multer global usa diskStorage, asi que el archivo esta en req.file.path
+  // El multer global usa diskStorage, asi que el archivo esta en .path
   // (no en .buffer). Lo leemos del disco antes de reenviar a n8n.
   const fs = await import('node:fs/promises');
-  const audioBuffer = await fs.readFile(req.file.path);
-  const audioName = req.file.originalname || 'audio.mp3';
-  const audioMime = req.file.mimetype || 'audio/mpeg';
+  const audioBuffer = await fs.readFile(audioFile.path);
+  const audioName = audioFile.originalname || 'audio.mp3';
+  const audioMime = audioFile.mimetype || 'audio/mpeg';
 
   try {
     const form = new FormData();
     form.append('audio', new Blob([audioBuffer], { type: audioMime }), audioName);
     form.append('topic', topic);
     form.append('style', style);
+    if (isRemixMode) form.append('remix', '1');
+    // Forward de las imagenes propias (modo remix)
+    for (let i = 0; i < imageFiles.length; i++) {
+      const f = imageFiles[i];
+      const buf = await fs.readFile(f.path);
+      form.append(`image_${i}`, new Blob([buf], { type: f.mimetype || 'image/jpeg' }), f.originalname || `image_${i}.jpg`);
+    }
 
-    req.log.info({ topic, audioName, audioBytes: audioBuffer.length }, 'forwarding upload to n8n webhook');
+    req.log.info(
+      { topic, audioName, audioBytes: audioBuffer.length, remix: isRemixMode, imagesCount: imageFiles.length },
+      'forwarding upload to n8n webhook'
+    );
     const upstream = await fetch(N8N_WEBHOOK_URL, {
       method: 'POST',
       body: form,

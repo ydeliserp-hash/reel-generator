@@ -1063,8 +1063,58 @@ async function applyMusicOnly(mainVideoPath, outputPath, mainDuration, musicPath
  * @param {object}   [params.logger]    Pino logger opcional.
  * @returns {Promise<{outputPath:string, metadata:object}>}
  */
+/**
+ * Expande spec.segments para el pipeline de VIDEO. Si un segmento tiene
+ * `assets[]` (modo remix con varias imagenes), lo divide en N sub-segmentos
+ * de duracion equiespaciada con un asset cada uno. Si tiene `asset` (singular,
+ * formato clasico), pasa tal cual. La VOZ no se ve afectada — la
+ * subdivision es solo visual.
+ *
+ * Cada sub-segmento lleva _origIdx (indice del segmento original) y _subIdx
+ * (indice del asset dentro del array, null si no es remix). Estos metadatos
+ * se usan para resolver assetFilePaths uploaded vs URLs.
+ */
+function expandSegments(originalSegments) {
+  const expanded = [];
+  for (let origIdx = 0; origIdx < originalSegments.length; origIdx++) {
+    const seg = originalSegments[origIdx];
+    if (Array.isArray(seg.assets) && seg.assets.length > 0) {
+      const N = seg.assets.length;
+      const dur = seg.end - seg.start;
+      const subDur = dur / N;
+      for (let i = 0; i < N; i++) {
+        expanded.push({
+          start: seg.start + i * subDur,
+          end: seg.start + (i + 1) * subDur,
+          // Subtitulos los maneja el .ass usando spec.segments ORIGINAL.
+          // Aqui dejamos string vacio para que la fase de video no los use.
+          subtitle_text: '',
+          asset: seg.assets[i],
+          _origIdx: origIdx,
+          _subIdx: i,
+        });
+      }
+    } else {
+      expanded.push({ ...seg, _origIdx: origIdx, _subIdx: null });
+    }
+  }
+  return expanded;
+}
+
 export async function composeReel({ spec, sessionDir, fontDir, logger, audioFilePath, assetFilePaths = {} }) {
   const t0 = Date.now();
+
+  // Expandir segmentos para el pipeline de video. Si ningun segmento tiene
+  // assets[], renderSegments == spec.segments (mismo comportamiento que antes).
+  // Si hay segmentos con assets[], se expanden a sub-segmentos.
+  const renderSegments = expandSegments(spec.segments);
+  const isRemixMode = renderSegments.length !== spec.segments.length;
+  if (isRemixMode) {
+    logger?.info?.(
+      { originalCount: spec.segments.length, expandedCount: renderSegments.length },
+      'remix mode: segmentos expandidos por assets[]'
+    );
+  }
 
   // Paso 0: preparar audio. Si el caller paso un fichero local (modo
   // multipart desde n8n), lo copiamos al sessionDir; en otro caso lo
@@ -1074,25 +1124,40 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     : extFromUrl(spec.audio_url, '.mp3');
   const audioPath = path.join(sessionDir, `audio${audioExt}`);
 
-  const audioDurations = spec.segments.map((s) => s.end - s.start);
+  const audioDurations = renderSegments.map((s) => s.end - s.start);
   const xfadeDur = BRAND.video.xfade_duration;
 
   // Descargas en paralelo (audio + todos los assets cuando proceda).
-  const segmentPaths = new Array(spec.segments.length);
+  const segmentPaths = new Array(renderSegments.length);
 
   const audioTask = audioFilePath
     ? copyFile(audioFilePath, audioPath)
     : downloadToFile(spec.audio_url, audioPath);
 
+  // Helper: resuelve la key de assetFilePaths para un sub-segmento.
+  // Modo clasico: `asset_${origIdx}` -> assetFilePaths[origIdx]
+  // Modo remix:   `asset_${origIdx}_${subIdx}` -> assetFilePaths['origIdx_subIdx']
+  // Ademas acepta el numero como string ('0') por compatibilidad con n8n.
+  function resolveUploadedAssetPath(seg) {
+    if (seg._subIdx !== null) {
+      return (
+        assetFilePaths[`${seg._origIdx}_${seg._subIdx}`] ||
+        assetFilePaths[`${seg._origIdx}-${seg._subIdx}`]
+      );
+    }
+    return assetFilePaths[seg._origIdx] ?? assetFilePaths[String(seg._origIdx)];
+  }
+
   // Audio en paralelo a las descargas de assets
   // Assets se descargan con concurrencia limitada para no saturar Pollinations.ai
   // (que devuelve 429 si pides muchas imagenes simultaneas).
   const downloadConcurrency = 2;
-  const downloadTasks = spec.segments.map((seg, i) => async () => {
-    if (assetFilePaths[i]) {
-      const ext = path.extname(assetFilePaths[i]) || (seg.asset.type === 'image' ? '.jpg' : '.mp4');
+  const downloadTasks = renderSegments.map((seg, i) => async () => {
+    const uploadedPath = resolveUploadedAssetPath(seg);
+    if (uploadedPath) {
+      const ext = path.extname(uploadedPath) || (seg.asset.type === 'image' ? '.jpg' : '.mp4');
       const dest = path.join(sessionDir, `asset_${String(i).padStart(2, '0')}${ext}`);
-      await copyFile(assetFilePaths[i], dest);
+      await copyFile(uploadedPath, dest);
       seg._localPath = dest;
       return;
     }
@@ -1185,10 +1250,10 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   const sessionBgPath = await pickBgForSession(path.basename(sessionDir));
   logger?.info?.({ sessionBgPath }, 'session background pattern picked');
   const maxParallel = BRAND.video.max_parallel_segments || 2;
-  logger?.info?.({ count: spec.segments.length, maxParallel }, 'starting phase 1: per-segment render');
-  const segmentTasks = spec.segments.map((seg, i) => async () => {
+  logger?.info?.({ count: renderSegments.length, maxParallel }, 'starting phase 1: per-segment render');
+  const segmentTasks = renderSegments.map((seg, i) => async () => {
       const audioDur = audioDurations[i];
-      const isLast = i === spec.segments.length - 1;
+      const isLast = i === renderSegments.length - 1;
       const visualDur = isLast ? audioDur : audioDur + xfadeDur;
       const segOut = path.join(sessionDir, `seg_${String(i).padStart(2, '0')}.mp4`);
 
@@ -1222,7 +1287,19 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       segmentPaths[i] = segOut;
     });
   await runWithConcurrency(segmentTasks, maxParallel);
-  logger?.info?.({ count: spec.segments.length }, 'phase 1 done');
+  logger?.info?.({ count: renderSegments.length }, 'phase 1 done');
+
+  // Escribir _localPath del primer sub-segmento a su parent original. Asi el
+  // codigo de cover image (que usa spec.segments[1]?._localPath) sigue
+  // funcionando en modo remix sin cambios.
+  for (const rs of renderSegments) {
+    if (rs._origIdx !== undefined && (rs._subIdx === null || rs._subIdx === 0)) {
+      const orig = spec.segments[rs._origIdx];
+      if (orig && !orig._localPath && rs._localPath) {
+        orig._localPath = rs._localPath;
+      }
+    }
+  }
 
   // Paso 2: subtitulos .ass.
   // El filtro ass se aplica ANTES del tpad (que añade introSilence al
