@@ -677,7 +677,7 @@ async function generateCoverImage({
     return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
   }
   const charWidthFactor = 0.58;
-  const baseTitleSize = 100;            // letra mas grande del titulo
+  const baseTitleSize = 120;            // letra MUY grande del titulo
   const maxTitleW = W - 80; // margen 40 a cada lado
   let titleLines;
   let titleSize = baseTitleSize;
@@ -724,7 +724,7 @@ async function generateCoverImage({
     const lineY = titleStartY + i * titleLineHeight;
     const outLabel = `withTitle${i}`;
     filterParts.push(
-      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
+      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:shadowcolor=black@0.75:shadowx=5:shadowy=5:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
     );
     lastV = outLabel;
   }
