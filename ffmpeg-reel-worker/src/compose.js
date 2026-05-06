@@ -67,6 +67,31 @@ async function pickBgForSession(sessionKey) {
 }
 
 /**
+ * Lista los MP3 disponibles en assets/music/ y elige uno determinístico por
+ * sesion (mismo session_id => misma melodia, distintas sesiones => distintas
+ * melodias). Devuelve null si no hay melodias o el directorio no existe.
+ */
+let _musicTracksCache = null;
+async function pickMusicForSession(sessionKey) {
+  if (!BRAND.background_music?.enabled) return null;
+  if (_musicTracksCache === null) {
+    const musicDir = path.join(process.env.ASSETS_DIR || '/app/assets', BRAND.background_music.music_dir);
+    try {
+      const { readdir } = await import('node:fs/promises');
+      const files = await readdir(musicDir);
+      _musicTracksCache = files
+        .filter((f) => /\.(mp3|m4a|wav|aac)$/i.test(f))
+        .map((f) => path.join(musicDir, f))
+        .sort();
+    } catch {
+      _musicTracksCache = [];
+    }
+  }
+  if (_musicTracksCache.length === 0) return null;
+  return _musicTracksCache[hashString(sessionKey + '_music') % _musicTracksCache.length];
+}
+
+/**
  * Genera una imagen con Google AI Studio. Prueba varios modelos en orden
  * porque la disponibilidad de Imagen via AI Studio cambia y depende de la
  * cuenta/region. Devuelve destPath si OK, o lanza Error agregado si todos
@@ -541,9 +566,6 @@ async function applyOverlays(
     '-r', BRAND.video.fps.toString(),
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
-    // Sin -shortest: el output dura lo del stream mas largo. Asi el audio
-    // siempre se reproduce hasta el final, aunque el video acabe antes
-    // (en cuyo caso se queda en frame congelado el ultimo instante).
     outputPath,
   ];
   await runFfmpeg(args, logger);
@@ -559,22 +581,51 @@ async function applyOverlays(
  * - mainDuration: duracion exacta del video principal (necesaria para offset)
  * - transitionDuration: segundos del crossfade (default 0.5)
  */
-async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDuration, transitionDuration, logger) {
+async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDuration, transitionDuration, outroDuration, musicPath, logger) {
   // El xfade arranca en (mainDuration - transitionDuration) y dura
   // transitionDuration segundos. El video resultante dura
   // mainDuration + outroDuration - transitionDuration.
   const offset = Math.max(0, mainDuration - transitionDuration);
-  const filter = [
+  const totalDuration = mainDuration + outroDuration - transitionDuration;
+
+  // Si hay musica de fondo, la mezclamos AQUI sobre el audio total (voz del
+  // reel + silencio del outro). Asi la musica sigue sonando durante los 3.5s
+  // del outro y hace fade-out al final.
+  const useMusic = !!musicPath;
+  const m = BRAND.background_music || {};
+  const musicVol = m.volume ?? 0.15;
+  const fadeIn = m.fade_in_duration ?? 1.0;
+  const fadeOut = m.fade_out_duration ?? 1.5;
+  const fadeOutStart = Math.max(0, totalDuration - fadeOut);
+
+  const filterParts = [
     `[0:v][1:v]xfade=transition=fade:duration=${transitionDuration}:offset=${offset.toFixed(3)}[v]`,
-    `[0:a][1:a]acrossfade=d=${transitionDuration}[a]`,
-  ].join(';');
-  await runFfmpeg([
+    `[0:a][1:a]acrossfade=d=${transitionDuration}[avoice]`,
+  ];
+  if (useMusic) {
+    // Input 2 = musica (con loop infinito por -stream_loop -1).
+    // Aplicamos volumen, fade-in al inicio y fade-out al final del reel total.
+    // amix con duration=first hace que el audio final dure lo del [avoice]
+    // (que ya cubre voz + outro), no toda la musica looped.
+    filterParts.push(
+      `[2:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q]`,
+      `[avoice][music_q]amix=inputs=2:duration=first:dropout_transition=0[a]`
+    );
+  }
+  const filter = filterParts.join(';');
+
+  const args = [
     '-y',
     '-i', mainVideoPath,
     '-i', outroClipPath,
+  ];
+  if (useMusic) {
+    args.push('-stream_loop', '-1', '-i', musicPath);
+  }
+  args.push(
     '-filter_complex', filter,
     '-map', '[v]',
-    '-map', '[a]',
+    '-map', useMusic ? '[a]' : '[avoice]',
     '-c:v', 'libx264',
     '-preset', BRAND.video.preset,
     '-crf', BRAND.video.crf.toString(),
@@ -584,7 +635,36 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
     '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart',
     outputPath,
-  ], logger, 'concat-outro-xfade');
+  );
+  await runFfmpeg(args, logger, 'concat-outro-xfade');
+  return outputPath;
+}
+
+/**
+ * Caso edge: outro deshabilitado pero hay musica. Aplicamos la musica al
+ * video principal en una pasada separada (sin concat). Si NO hay musica,
+ * basta con copiar el archivo.
+ */
+async function applyMusicOnly(mainVideoPath, outputPath, mainDuration, musicPath, logger) {
+  const m = BRAND.background_music || {};
+  const musicVol = m.volume ?? 0.15;
+  const fadeIn = m.fade_in_duration ?? 1.0;
+  const fadeOut = m.fade_out_duration ?? 1.5;
+  const fadeOutStart = Math.max(0, mainDuration - fadeOut);
+  await runFfmpeg([
+    '-y',
+    '-i', mainVideoPath,
+    '-stream_loop', '-1', '-i', musicPath,
+    '-filter_complex',
+    `[1:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q];[0:a][music_q]amix=inputs=2:duration=first:dropout_transition=0[a]`,
+    '-map', '0:v',
+    '-map', '[a]',
+    '-c:v', 'copy',
+    '-c:a', 'aac',
+    '-b:a', BRAND.video.audio_bitrate,
+    '-movflags', '+faststart',
+    outputPath,
+  ], logger, 'apply-music-only');
   return outputPath;
 }
 
@@ -803,7 +883,17 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   }
 
   const useOutro = !!outroClipPath;
-  const mainVideoPath = useOutro ? path.join(sessionDir, 'main.mp4') : finalOutputPath;
+  // Musica de fondo: elegida deterministicamente por sesion. Se aplica EN el
+  // concatWithOutro (cubre voz + outro) o, si no hay outro, en applyMusicOnly.
+  const musicPath = await pickMusicForSession(path.basename(sessionDir));
+  const useMusic = !!musicPath;
+  if (useMusic) logger?.info?.({ musicPath }, 'background music picked for session');
+
+  // Si hay outro o musica → applyOverlays escribe a un archivo intermedio
+  // (sin musica). Despues concatWithOutro o applyMusicOnly producen el final.
+  // Si no hay nada, applyOverlays escribe directo al final.
+  const needsExtraStep = useOutro || useMusic;
+  const mainVideoPath = needsExtraStep ? path.join(sessionDir, 'main.mp4') : finalOutputPath;
   await applyOverlays(
     {
       videoPath: concatPath,
@@ -817,15 +907,12 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     logger
   );
 
-  // Paso 5: si hay clip outro pre-renderizado, concat con xfade (transicion
-  // fade suave) entre el reel y el outro. Reencodea pero solo una pasada y
-  // bastante rapida porque ambos inputs ya estan codificados.
-  // Si el outro_clip esta corrupto (ej: bootstrap fallo a mitad), devolvemos
-  // el reel principal sin outro en vez de fallar con 500.
+  // Paso 5: combinacion final (outro + musica + fade out).
+  // Si el outro_clip esta corrupto, fallback a copy de main.
+  const mainDuration = audioDurationProbed && audioDurationProbed > 0
+    ? audioDurationProbed
+    : audioDurations.reduce((acc, d) => acc + d, 0);
   if (useOutro) {
-    const mainDuration = audioDurationProbed && audioDurationProbed > 0
-      ? audioDurationProbed
-      : audioDurations.reduce((acc, d) => acc + d, 0);
     try {
       await concatWithOutro(
         mainVideoPath,
@@ -833,14 +920,35 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
         finalOutputPath,
         mainDuration,
         BRAND.outro.transition_duration,
+        BRAND.outro.duration,
+        useMusic ? musicPath : null,
         logger
       );
-      logger?.info?.({ outputPath: finalOutputPath, outroClipPath, mainDuration }, 'outro xfade-concatenated to main video');
+      logger?.info?.({ outputPath: finalOutputPath, outroClipPath, mainDuration, withMusic: useMusic }, 'outro xfade-concatenated (with music)');
     } catch (concatErr) {
-      logger?.warn?.({ err: concatErr.message?.slice(0, 200), outroClipPath }, 'concat con outro fallo, devolviendo reel sin outro');
+      logger?.warn?.({ err: concatErr.message?.slice(0, 200), outroClipPath }, 'concat con outro fallo, fallback a main');
+      // Fallback: si hay musica intentamos solo musica; si no, copy
+      if (useMusic) {
+        try {
+          await applyMusicOnly(mainVideoPath, finalOutputPath, mainDuration, musicPath, logger);
+        } catch (e) {
+          await copyFile(mainVideoPath, finalOutputPath);
+        }
+      } else {
+        await copyFile(mainVideoPath, finalOutputPath);
+      }
+    }
+  } else if (useMusic) {
+    // No hay outro pero si musica
+    try {
+      await applyMusicOnly(mainVideoPath, finalOutputPath, mainDuration, musicPath, logger);
+      logger?.info?.({ outputPath: finalOutputPath, musicPath }, 'background music applied to main');
+    } catch (e) {
+      logger?.warn?.({ err: e.message?.slice(0, 200) }, 'apply music fallo, devolviendo reel sin musica');
       await copyFile(mainVideoPath, finalOutputPath);
     }
   }
+  // Si !useOutro && !useMusic, applyOverlays ya escribio en finalOutputPath.
   const outputPath = finalOutputPath;
 
   const elapsedMs = Date.now() - t0;

@@ -86,6 +86,15 @@ export const BRAND = {
     shadow_blur: 14,
     shadow_alpha: 0.65,
   },
+  // Musica de fondo suave bajo la voz. Las melodias estan en assets/music/
+  // (melody1.mp3 ... melody8.mp3). Se elige una por reel via hash del sessionDir.
+  background_music: {
+    enabled: process.env.BACKGROUND_MUSIC_ENABLED !== 'false',
+    music_dir: 'music',                  // dentro de assets/
+    volume: 0.15,                        // 0..1 (15% volumen, bajo para no tapar voz)
+    fade_in_duration: 1.0,               // segundos de fade-in al inicio
+    fade_out_duration: 1.5,              // segundos de fade-out al final
+  },
   video: {
     width: 1080,
     height: 1350,                  // Formato 4:5 (Instagram feed portrait)
