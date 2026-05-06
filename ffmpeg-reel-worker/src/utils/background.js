@@ -12,10 +12,82 @@
  * generado con FFmpeg geq (globo terraqueo).
  */
 import { spawn } from 'node:child_process';
-import { mkdir, readdir, stat } from 'node:fs/promises';
+import { mkdir, readdir, stat, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { BRAND, ffmpegColor } from '../branding.js';
 import { downloadToFile } from './download.js';
+
+// ---------------------------------------------------------------------------
+// Cache persistente de assets generados
+// ---------------------------------------------------------------------------
+//
+// Los assets pesados (15 patterns Pollinations + 11 outro_clips + logo
+// redimensionado + bg_gradient) se regeneran en cada deploy del worker, lo
+// que tarda 2-3 minutos. Si los persistimos en un volumen del host, los
+// re-deploys siguientes los recuperan en ~2 segundos.
+//
+// Estrategia: para cada asset, antes de generarlo verificamos si existe en
+// el directorio de cache. Si si, lo copiamos al working dir (rapido). Si
+// no, lo generamos en working dir y dejamos copia en cache para futuros
+// deploys.
+//
+// Para invalidar el cache (ej: al cambiar prompts), poner CACHE_BUST=1 en
+// las env vars del worker. Vuelve a generar todo.
+const CACHE_DIR = process.env.ASSETS_CACHE_DIR || '/tmp/reel-sessions/.assets-cache';
+const CACHE_BUST = process.env.CACHE_BUST === '1';
+
+function _cachePathFor(workingPath) {
+  // /app/assets/overlays/foo.png -> {CACHE_DIR}/overlays/foo.png
+  // Mantenemos la estructura relativa al ASSETS_DIR para que el cache sea
+  // espejo del working dir.
+  const assetsDir = process.env.ASSETS_DIR || '/app/assets';
+  const rel = path.relative(assetsDir, workingPath);
+  return path.join(CACHE_DIR, rel);
+}
+
+async function _existsAndValid(filePath, minSize = 100) {
+  try {
+    const s = await stat(filePath);
+    return s.size >= minSize;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Si el asset ya esta en el cache persistente, lo copia al working dir y
+ * devuelve true. Si no, devuelve false (caller debe generar el asset).
+ * Si CACHE_BUST=1, siempre devuelve false.
+ */
+async function tryRestoreFromCache(workingPath, logger, label) {
+  if (CACHE_BUST) return false;
+  const cPath = _cachePathFor(workingPath);
+  if (!(await _existsAndValid(cPath))) return false;
+  try {
+    await mkdir(path.dirname(workingPath), { recursive: true });
+    await copyFile(cPath, workingPath);
+    logger?.info?.({ workingPath, cachePath: cPath, label }, 'asset restored from cache');
+    return true;
+  } catch (e) {
+    logger?.warn?.({ err: e.message, label }, 'restore from cache failed');
+    return false;
+  }
+}
+
+/**
+ * Tras generar un asset en el working dir, copia al cache persistente para
+ * futuros deploys. Best-effort: si falla, no rompe el flujo.
+ */
+async function saveToCache(workingPath, logger, label) {
+  const cPath = _cachePathFor(workingPath);
+  try {
+    await mkdir(path.dirname(cPath), { recursive: true });
+    await copyFile(workingPath, cPath);
+    logger?.info?.({ workingPath, cachePath: cPath, label }, 'asset saved to cache');
+  } catch (e) {
+    logger?.warn?.({ err: e.message, label }, 'save to cache failed (asset still works for this session)');
+  }
+}
 
 function runFfmpeg(args) {
   return new Promise((resolve, reject) => {
@@ -67,16 +139,29 @@ async function bakePollinationsPatterns(patternsDir, w, h, logger) {
   const generatedPaths = [];
 
   for (let i = 0; i < PATTERN_PROMPTS.length; i++) {
+    const dest = path.join(patternsDir, `bg_pattern_${i}.png`);
+
+    // Cache: si ya existe en working o en persistent cache, skip Pollinations
+    if (await _existsAndValid(dest, 5000)) {
+      generatedPaths.push(dest);
+      logger?.info?.({ idx: i, dest }, 'pattern already in working dir, skip');
+      continue;
+    }
+    if (await tryRestoreFromCache(dest, logger, `bg_pattern_${i}`)) {
+      generatedPaths.push(dest);
+      continue;
+    }
+
     const prompt = PATTERN_PROMPTS[i];
     const seed = 5000 + i * 137;
     let url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&model=flux&seed=${seed}&nologo=true&enhance=true`;
     if (POLLINATIONS_TOKEN) url += `&token=${encodeURIComponent(POLLINATIONS_TOKEN)}`;
 
-    const dest = path.join(patternsDir, `bg_pattern_${i}.png`);
     try {
       await downloadToFile(url, dest, { timeoutMs: 90000, maxRetries: 3 });
       generatedPaths.push(dest);
       logger?.info?.({ idx: i, dest }, 'pattern background baked from pollinations');
+      await saveToCache(dest, logger, `bg_pattern_${i}`);
     } catch (e) {
       logger?.warn?.({ idx: i, err: e.message?.slice(0, 200) }, 'pattern bg failed, will skip');
     }
@@ -92,6 +177,13 @@ async function bakePollinationsPatterns(patternsDir, w, h, logger) {
  * Se usa si Pollinations no genera ninguno o como base unica si no hay token.
  */
 async function bakeProceduralGradient(outputPath, logger) {
+  // Cache: si ya existe en working o en persistent cache, no regenerar
+  if (await _existsAndValid(outputPath)) {
+    logger?.info?.({ outputPath }, 'gradient already in working dir, skip');
+    return outputPath;
+  }
+  if (await tryRestoreFromCache(outputPath, logger, 'bg_gradient')) return outputPath;
+
   const w = BRAND.video.width;
   const h = BRAND.video.height;
   const cDark = '0x050E22';
@@ -142,6 +234,7 @@ async function bakeProceduralGradient(outputPath, logger) {
       ]);
     }
   }
+  await saveToCache(outputPath, logger, 'bg_gradient');
   return outputPath;
 }
 
@@ -202,6 +295,16 @@ export async function ensureOutroClip(params, logger) {
     sloganFadeInStart, sloganFadeInDuration,
     backdropColor,
   } = params;
+
+  // Cache: si ya existe en working o en cache persistente, skip generation
+  if (await _existsAndValid(outputPath, 10000)) {
+    logger?.info?.({ outputPath }, 'outro clip already in working dir, skip');
+    return outputPath;
+  }
+  const cacheLabel = `outro_clip_${path.basename(outputPath, '.mp4')}`;
+  if (await tryRestoreFromCache(outputPath, logger, cacheLabel)) {
+    return outputPath;
+  }
 
   const navyColor = `0x${backdropColor.replace('#', '').toUpperCase()}`;
   const shadowOffsetX = params.shadowOffsetX ?? 6;
@@ -272,6 +375,7 @@ export async function ensureOutroClip(params, logger) {
     ]);
     const s = await stat(outputPath);
     logger?.info?.({ outputPath, bytes: s.size, duration, videoW, videoH }, 'outro clip MP4 pre-rendered');
+    await saveToCache(outputPath, logger, cacheLabel);
     return outputPath;
   } catch (e) {
     logger?.warn?.({ err: e.message }, 'outro clip pre-render failed, reels saldran sin outro');
@@ -332,6 +436,14 @@ export async function ensureOutroClipsForAllPatterns(commonParams, patternsBaseD
  * Si el redimensionado falla, devuelve null y compose.js usara el original.
  */
 export async function ensureResizedLogo(originalLogoPath, resizedLogoPath, targetWidth, logger) {
+  // Cache: si ya existe en working o en persistent cache, skip
+  if (await _existsAndValid(resizedLogoPath)) {
+    logger?.info?.({ resizedLogoPath }, 'logo resized already in working, skip');
+    return resizedLogoPath;
+  }
+  if (await tryRestoreFromCache(resizedLogoPath, logger, 'logo_resized')) {
+    return resizedLogoPath;
+  }
   try {
     await runFfmpeg([
       '-y',
@@ -342,6 +454,7 @@ export async function ensureResizedLogo(originalLogoPath, resizedLogoPath, targe
     ]);
     const s = await stat(resizedLogoPath);
     logger?.info?.({ resizedLogoPath, bytes: s.size, targetWidth }, 'logo resized for outro');
+    await saveToCache(resizedLogoPath, logger, 'logo_resized');
     return resizedLogoPath;
   } catch (e) {
     logger?.warn?.({ err: e.message }, 'logo resize failed, compose usara el PNG original');
