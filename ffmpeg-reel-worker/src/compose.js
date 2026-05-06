@@ -614,37 +614,71 @@ async function applyOverlays(
     // Tiempo estimado de cuando se "habla" el numero (proporcional a la
     // posicion del char en el texto del segmento).
     const numberSpokenT = seg.start + (charIdx / Math.max(text.length, 1)) * segDur;
-    const popDur = 0.8;        // duracion total del pop en pantalla
-    const fadeDur = 0.18;      // fade in y fade out
-    let popStart = numberSpokenT - 0.05;
+    const popDur = 1.2;        // duracion total del pop en pantalla
+    const fadeDur = 0.22;      // fade in y fade out (~18% del total)
+    let popStart = numberSpokenT - 0.1;
     let popEnd = popStart + popDur;
     // Asegurar que el pop cabe dentro del segmento
     if (popStart < seg.start + 0.05) popStart = seg.start + 0.05;
     if (popEnd > seg.end - 0.05) popEnd = seg.end - 0.05;
-    if (popEnd - popStart < 0.3) continue; // demasiado corto, skip
+    if (popEnd - popStart < 0.4) continue; // demasiado corto, skip
 
-    // Pop: numero MUY grande, dorado, con outline negro grueso + sombra para
-    // legibilidad sobre cualquier fondo. Centrado verticalmente en el area
-    // del asset (mitad de la imagen). Hard on/off via enable=between(t,...)
-    // (mismo patron que el title_badge — es la sintaxis mas estable).
+    // Alpha animada: triangulo lineal con plateau plano.
+    //   t < popStart           -> negativo  -> clip a 0
+    //   popStart..+fadeDur     -> 0..1 (fade in)
+    //   +fadeDur..popEnd-fadeDur -> 1 (hold)
+    //   popEnd-fadeDur..popEnd -> 1..0 (fade out)
+    //   t > popEnd             -> negativo  -> clip a 0
+    // Forma compacta: clip(min(min(rampUp, rampDown), 1), 0, 1)
+    // Sin escapes raros — los `,` dentro de '...' son literales para ffmpeg.
+    const ps = popStart.toFixed(3);
+    const pe = popEnd.toFixed(3);
+    const fd = fadeDur.toFixed(3);
+    const alphaExpr =
+      `clip(min(min((t-${ps})/${fd},(${pe}-t)/${fd}),1),0,1)`;
+
+    // Pop: numero MUY grande, dorado, centrado verticalmente en el area
+    // del asset. Sombra DIFUMINADA simulada con stack de drawtext con
+    // borderw progresivamente menor + alpha mayor (efecto halo soft).
     const popFontSize = 220;
     const popY = Math.round(ASSET_TOP_Y + ASSET_AREA_HEIGHT / 2 - popFontSize / 2);
-    const popDraw = [
+
+    // Capas de halo (texto invisible, solo el border crea el efecto).
+    // De fuera a dentro: borderw decrece, alpha aumenta.
+    const haloLayers = [
+      { borderw: 18, alpha: 0.18 },
+      { borderw: 11, alpha: 0.32 },
+      { borderw: 6,  alpha: 0.55 },
+    ];
+    for (const layer of haloLayers) {
+      filters.push([
+        `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
+        `text='${escapeFilterSingleQuoted(popRaw)}'`,
+        `fontsize=${popFontSize}`,
+        `fontcolor=black@0`,
+        `borderw=${layer.borderw}`,
+        `bordercolor=black@${layer.alpha}`,
+        `x=(w-text_w)/2`,
+        `y=${popY}`,
+        `expansion=none`,
+        `alpha='${alphaExpr}'`,
+      ].join(':'));
+    }
+
+    // Capa final: el numero dorado en si mismo, con outline negro fino
+    // para definicion. Va POR ENCIMA del halo difuminado.
+    filters.push([
       `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
       `text='${escapeFilterSingleQuoted(popRaw)}'`,
       `fontsize=${popFontSize}`,
       `fontcolor=${goldColor}`,
-      `borderw=8`,
-      `bordercolor=black@0.95`,
-      `shadowcolor=black@0.6`,
-      `shadowx=6`,
-      `shadowy=6`,
+      `borderw=3`,
+      `bordercolor=black@0.85`,
       `x=(w-text_w)/2`,
       `y=${popY}`,
       `expansion=none`,
-      `enable='between(t,${popStart.toFixed(3)},${popEnd.toFixed(3)})'`,
-    ].join(':');
-    filters.push(popDraw);
+      `alpha='${alphaExpr}'`,
+    ].join(':'));
   }
 
   const vf = filters.join(',');
