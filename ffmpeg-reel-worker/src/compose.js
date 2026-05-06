@@ -482,6 +482,22 @@ async function applyOverlays(
 
   const filters = [];
 
+  // Capa 0: barra de progreso dorada en el borde superior. Crece linealmente
+  // con el tiempo del concat. Refuerza la psicologia de "casi acaba" → la
+  // gente termina mas reels, IG lo premia.
+  // Nota: se evalua a t=0 durante el frame congelado del intro_silence (la
+  // barra esta en 0% mientras la voz no ha empezado, lo cual es coherente).
+  if (segments.length > 0) {
+    const concatDur = segments[segments.length - 1].end;
+    if (concatDur > 0) {
+      const barH = 8;
+      const barY = 0; // pegada al borde superior
+      filters.push(
+        `drawbox=x=0:y=${barY}:w='${BRAND.video.width}*t/${concatDur}':h=${barH}:color=${goldColor}:t=fill`
+      );
+    }
+  }
+
   // Capa 1: subtitulos quemados (renderer libass via filtro `ass`).
   filters.push(`ass='${escapeFilterSingleQuoted(subtitlePathPosix)}'`);
 
