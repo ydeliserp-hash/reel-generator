@@ -145,7 +145,7 @@ export const BRAND = {
     bar_alpha: 0.8,
   },
   title_badge: {
-    font_size: 74,                       // letra mas grande
+    font_size: 60,                       // letra base del title badge
     horizontal_padding: 40,
     vertical_padding: 18,
     line_spacing: 1.15,                  // multiplicador del fontsize entre lineas
