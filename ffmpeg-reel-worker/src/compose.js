@@ -641,7 +641,7 @@ async function applyOverlays(
  * Util para subir como portada del reel en Instagram (cuadricula del feed).
  */
 async function generateCoverImage({
-  outputPath, bgPath, geminiImagePath, logoPath,
+  outputPath, bgPath, geminiImagePath,
   title, hook, fontDir,
 }, logger) {
   const W = BRAND.video.width;     // 1080
@@ -699,18 +699,26 @@ async function generateCoverImage({
     }
   }
 
-  const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  // Escapado para drawtext text='...' :
+  //   - \  -> \\\\ (doble: una vez para JS string, otra para ffmpeg)
+  //   - '  -> \\\' (lo mismo, debe quedar \' en el filter)
+  //   - :  -> \\:  (opcional: dentro de '...' es seguro, pero algunas versiones
+  //                  de ffmpeg lo interpretan, asi que lo escapamos por seguridad)
+  //   - %  -> \\%  (idem)
+  const escapeArg = (s) =>
+    String(s)
+      .replace(/\\/g, '\\\\')
+      .replace(/'/g, "\\'")
+      .replace(/:/g, '\\:')
+      .replace(/%/g, '\\%');
 
   // Construir filter_complex:
   // [0:v] bg pattern  -> escalar/cropear a 1080x1350
   // [1:v] gemini img  -> escalar a 1000x740 con cover-fit
-  // [2:v] logo PNG    -> escalar a 130 px de ancho
-  // Composicion: bg -> overlay imagen -> drawtext titulo (1 o 2 lineas) ->
-  //              drawtext gancho -> drawtext firma -> overlay logo
+  // Composicion: bg -> overlay imagen -> drawtext titulo (1 o 2 lineas) -> firma
   const filterParts = [
     `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},format=yuv420p[bg]`,
     `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba[gemini]`,
-    `[2:v]scale=130:-1,format=rgba[smallLogo]`,
     `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
   ];
   // Titulo (1 o 2 lineas) — sin gancho debajo, solo titulo grande centrado
@@ -739,7 +747,6 @@ async function generateCoverImage({
     '-y',
     '-loop', '1', '-t', '1', '-i', bgPath,
     '-loop', '1', '-t', '1', '-i', geminiImagePath,
-    '-loop', '1', '-t', '1', '-i', logoPath,
     '-filter_complex', filter,
     '-map', '[out]',
     '-frames:v', '1',
@@ -1159,12 +1166,6 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   try {
     const coverGeminiIdx = spec.segments.length > 1 ? 1 : 0;
     const coverGeminiPath = spec.segments[coverGeminiIdx]?._localPath;
-    const overlaysDir = path.join(process.env.ASSETS_DIR || '/app/assets', 'overlays');
-    const resizedLogo = path.join(overlaysDir, 'logo_firma_resized.png');
-    const originalLogo = path.join(overlaysDir, BRAND.outro?.logo_file || 'logo_firma.png');
-    let logoPathForCover;
-    try { await stat(resizedLogo); logoPathForCover = resizedLogo; }
-    catch { logoPathForCover = originalLogo; }
     const titleText = spec.title_badge?.text || '';
     const hookText = (spec.segments[0]?.subtitle_text || '').trim();
     if (!coverGeminiPath) {
@@ -1176,14 +1177,14 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
         outputPath: coverPath,
         bgPath: sessionBgPath,
         geminiImagePath: coverGeminiPath,
-        logoPath: logoPathForCover,
         title: titleText,
         hook: hookText,
         fontDir,
       }, logger);
     }
   } catch (e) {
-    logger?.warn?.({ err: e.message?.slice(0, 200) }, 'cover image generation failed (reel sigue OK)');
+    // NO truncar: necesitamos el stderr de ffmpeg completo para diagnosticar.
+    logger?.warn?.({ err: e.message }, 'cover image generation failed (reel sigue OK)');
   }
 
   const elapsedMs = Date.now() - t0;
