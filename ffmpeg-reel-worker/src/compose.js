@@ -676,9 +676,13 @@ async function generateCoverImage({
     }
     return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
   }
-  const charWidthFactor = 0.58;
-  const baseTitleSize = 120;            // letra MUY grande del titulo
-  const maxTitleW = W - 80; // margen 40 a cada lado
+  // 0.50 es mas ajustado al ancho real de Montserrat Bold (era 0.58, demasiado
+  // conservador, hacia que el auto-shrink dejara la letra mas pequena de lo
+  // necesario). Combinado con maxTitleW casi al borde, el titulo sale ~94pt
+  // en lineas de 22 chars (antes salia ~78pt).
+  const charWidthFactor = 0.50;
+  const baseTitleSize = 140;            // letra MUY grande del titulo
+  const maxTitleW = W - 40; // margen 20 a cada lado
   let titleLines;
   let titleSize = baseTitleSize;
   if (titleText.length * baseTitleSize * charWidthFactor <= maxTitleW) {
@@ -721,18 +725,21 @@ async function generateCoverImage({
     `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba[gemini]`,
     `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
   ];
-  // Titulo (1 o 2 lineas) — sin gancho debajo, solo titulo grande centrado
+  // Titulo (1 o 2 lineas) — sin gancho debajo, solo titulo grande
   const titleLineHeight = Math.round(titleSize * 1.15);
-  // Centrar verticalmente el bloque de titulo en el espacio entre la imagen
-  // (acaba en y=820) y la firma (en y=H-100=1250). Espacio: 820-1250.
-  const titleBlockH = titleSize + (titleLines.length - 1) * titleLineHeight;
-  const titleStartY = 870 + Math.round((380 - titleBlockH) / 2);
+  // Posicionar el bloque de titulo PEGADO debajo de la imagen (acaba en y=820)
+  // con un gap de ~30px. Centrar verticalmente seria muy abajo — la doctora
+  // prefiere el titulo mas arriba para dar respiro a la firma del pie.
+  const titleStartY = 850;
+  // Outline negro grueso + sombra mas marcada simula un "difuminado" oscuro
+  // que da pop al texto sobre fondos complejos (era shadowx/y=5, ahora 8).
+  const titleStyle = `borderw=5:bordercolor=black@0.9:shadowcolor=black@0.85:shadowx=8:shadowy=8`;
   let lastV = 'withImg';
   for (let i = 0; i < titleLines.length; i++) {
     const lineY = titleStartY + i * titleLineHeight;
     const outLabel = `withTitle${i}`;
     filterParts.push(
-      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:shadowcolor=black@0.75:shadowx=5:shadowy=5:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
+      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:${titleStyle}:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
     );
     lastV = outLabel;
   }
