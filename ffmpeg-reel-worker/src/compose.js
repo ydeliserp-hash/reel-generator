@@ -516,6 +516,9 @@ async function applyOverlays(
       `fontcolor=${goldColor}`,
       'x=(w-text_w)/2',
       `y=${badgeY + padV}`,
+      // expansion=none: el texto se dibuja literal. Protege contra interpretacion
+      // de %{...} (variables ffmpeg) si el titulo trae simbolos como %.
+      'expansion=none',
     ];
     if (dur) drawtextParts.push(`enable='lt(t,${dur})'`);
     filters.push(drawtextParts.join(':'));
