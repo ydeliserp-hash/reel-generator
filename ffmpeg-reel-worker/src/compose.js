@@ -662,45 +662,66 @@ async function generateCoverImage({
   //   gancho:        centro vertical y=1110 (font 40)
   //   firma + logo:  y=1280 (firma izq, logo der)
 
-  // Decidir wrap del titulo (1 linea base 80, o 2 lineas equilibradas)
-  function splitTwoLines(str) {
-    const words = str.trim().split(/\s+/);
-    if (words.length < 2) return null;
-    let bestSplit = -1;
-    let bestDiff = Infinity;
-    for (let i = 1; i < words.length; i++) {
-      const a = words.slice(0, i).join(' ');
-      const b = words.slice(i).join(' ');
-      const diff = Math.abs(a.length - b.length);
-      if (diff < bestDiff) { bestDiff = diff; bestSplit = i; }
+  // Wrap balanceado en N lineas. Brute-force: prueba cada particion posible
+  // de las palabras y elige la que minimiza la longitud de la linea mas larga.
+  // Para N<=3 y titulos de hasta ~12 palabras, son <100 combinaciones — barato.
+  function splitNLines(str, n) {
+    const words = str.trim().split(/\s+/).filter(Boolean);
+    if (words.length < n) return null;
+    let best = null;
+    let bestMax = Infinity;
+    function rec(start, splitsLeft, splits) {
+      if (splitsLeft === 0) {
+        const all = [0, ...splits, words.length];
+        const lines = [];
+        let maxLen = 0;
+        for (let i = 0; i < all.length - 1; i++) {
+          const line = words.slice(all[i], all[i + 1]).join(' ');
+          lines.push(line);
+          if (line.length > maxLen) maxLen = line.length;
+        }
+        if (maxLen < bestMax) { bestMax = maxLen; best = lines; }
+        return;
+      }
+      for (let i = start; i <= words.length - splitsLeft; i++) {
+        splits.push(i);
+        rec(i + 1, splitsLeft - 1, splits);
+        splits.pop();
+      }
     }
-    return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
+    rec(1, n - 1, []);
+    return best;
   }
-  // 0.50 es mas ajustado al ancho real de Montserrat Bold (era 0.58, demasiado
-  // conservador, hacia que el auto-shrink dejara la letra mas pequena de lo
-  // necesario). Combinado con maxTitleW casi al borde, el titulo sale ~94pt
-  // en lineas de 22 chars (antes salia ~78pt).
-  const charWidthFactor = 0.50;
-  const baseTitleSize = 140;            // letra MUY grande del titulo
-  const maxTitleW = W - 40; // margen 20 a cada lado
+
+  // 0.58 es el factor real promedio de Montserrat Bold (testeado: 0.50 hacia
+  // que el titulo se desbordase del canvas). maxTitleW deja un margen seguro.
+  const charWidthFactor = 0.58;
+  const baseTitleSize = 140;
+  const maxTitleW = W - 80; // margen 40 a cada lado, suficiente para no rozar
+  // Algoritmo: probar 1 linea, 2 lineas, 3 lineas en ese orden con baseTitleSize.
+  // Usar la primera que quepa entera. Si NINGUNA cabe en 3 lineas a baseTitleSize,
+  // hacer auto-shrink con 3 lineas (mejor que 2 muy pequenas).
+  function fitsAt(lines, size) {
+    const longest = lines.reduce((m, l) => Math.max(m, l.length), 0);
+    return longest * size * charWidthFactor <= maxTitleW;
+  }
   let titleLines;
   let titleSize = baseTitleSize;
-  if (titleText.length * baseTitleSize * charWidthFactor <= maxTitleW) {
-    titleLines = [titleText];
+  const oneLine = [titleText];
+  const twoLines = splitNLines(titleText, 2);
+  const threeLines = splitNLines(titleText, 3);
+  if (fitsAt(oneLine, baseTitleSize)) {
+    titleLines = oneLine;
+  } else if (twoLines && fitsAt(twoLines, baseTitleSize)) {
+    titleLines = twoLines;
+  } else if (threeLines && fitsAt(threeLines, baseTitleSize)) {
+    titleLines = threeLines;
   } else {
-    const split = splitTwoLines(titleText);
-    if (split) {
-      const longest = Math.max(split[0].length, split[1].length);
-      if (longest * baseTitleSize * charWidthFactor <= maxTitleW) {
-        titleLines = split;
-      } else {
-        titleSize = Math.max(56, Math.floor(maxTitleW / (longest * charWidthFactor)));
-        titleLines = split;
-      }
-    } else {
-      titleSize = Math.max(56, Math.floor(maxTitleW / (titleText.length * charWidthFactor)));
-      titleLines = [titleText];
-    }
+    // Auto-shrink con 3 lineas (o 2 si no hay suficientes palabras).
+    const fallback = threeLines || twoLines || oneLine;
+    const longest = fallback.reduce((m, l) => Math.max(m, l.length), 0);
+    titleSize = Math.max(56, Math.floor(maxTitleW / (longest * charWidthFactor)));
+    titleLines = fallback;
   }
 
   // Escapado para drawtext text='...' :
@@ -716,30 +737,54 @@ async function generateCoverImage({
       .replace(/:/g, '\\:')
       .replace(/%/g, '\\%');
 
-  // Construir filter_complex:
-  // [0:v] bg pattern  -> escalar/cropear a 1080x1350
-  // [1:v] gemini img  -> escalar a 1000x740 con cover-fit
-  // Composicion: bg -> overlay imagen -> drawtext titulo (1 o 2 lineas) -> firma
+  // Posicionar el bloque de titulo PEGADO debajo de la imagen (acaba en y=820)
+  // con un gap de ~30px. La doctora prefiere el titulo arriba.
+  const titleLineHeight = Math.round(titleSize * 1.15);
+  const titleStartY = 850;
+
+  // Tecnica de sombra DIFUMINADA (gaussian blur real, no outline ni shadowx/y):
+  //   1) crear un canvas transparente (color filter source)
+  //   2) drawtext del titulo en negro opaco sobre ese canvas
+  //   3) gblur con sigma alto -> halo difuso negro
+  //   4) overlay del halo sobre [withImg] con offset vertical pequeno (drop shadow)
+  //   5) drawtext del titulo en dorado encima del halo
+  //
+  // Esto produce un sombreado suave/difuminado que rodea las letras, en lugar
+  // del outline duro o shadowx/y rigido que ofrece drawtext nativo.
   const filterParts = [
     `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},format=yuv420p[bg]`,
     `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba[gemini]`,
     `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
+    // Canvas transparente del mismo tamano que el cover (fuente: filter source)
+    `color=color=black@0.0:size=${W}x${H}:duration=1:rate=1,format=yuva420p[blank]`,
   ];
-  // Titulo (1 o 2 lineas) — sin gancho debajo, solo titulo grande
-  const titleLineHeight = Math.round(titleSize * 1.15);
-  // Posicionar el bloque de titulo PEGADO debajo de la imagen (acaba en y=820)
-  // con un gap de ~30px. Centrar verticalmente seria muy abajo — la doctora
-  // prefiere el titulo mas arriba para dar respiro a la firma del pie.
-  const titleStartY = 850;
-  // Outline negro grueso + sombra mas marcada simula un "difuminado" oscuro
-  // que da pop al texto sobre fondos complejos (era shadowx/y=5, ahora 8).
-  const titleStyle = `borderw=5:bordercolor=black@0.9:shadowcolor=black@0.85:shadowx=8:shadowy=8`;
-  let lastV = 'withImg';
+
+  // Capa 1: drawtext en negro opaco sobre canvas transparente (una linea por iter)
+  let shadowLast = 'blank';
+  for (let i = 0; i < titleLines.length; i++) {
+    const lineY = titleStartY + i * titleLineHeight;
+    const outLabel = `sh${i}`;
+    filterParts.push(
+      `[${shadowLast}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=black@0.95:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
+    );
+    shadowLast = outLabel;
+  }
+
+  // Capa 2: gaussian blur sigma alto -> halo difuso. sigma=12 da un
+  // "difuminado" notable sin perder la silueta del texto.
+  filterParts.push(`[${shadowLast}]gblur=sigma=12[blurredShadow]`);
+
+  // Capa 3: overlay del halo bajo el titulo. Offset vertical 5 = drop shadow leve.
+  filterParts.push(`[withImg][blurredShadow]overlay=0:5[withShadow]`);
+
+  // Capa 4: drawtext en dorado del titulo encima (sin border, sin shadow propio
+  // — el difuminado ya esta abajo).
+  let lastV = 'withShadow';
   for (let i = 0; i < titleLines.length; i++) {
     const lineY = titleStartY + i * titleLineHeight;
     const outLabel = `withTitle${i}`;
     filterParts.push(
-      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:${titleStyle}:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
+      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
     );
     lastV = outLabel;
   }
