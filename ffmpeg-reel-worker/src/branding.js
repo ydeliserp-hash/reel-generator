@@ -83,20 +83,18 @@ export const BRAND = {
       'homocisteína', 'homocisteina', 'PCR',
       // Vitaminas / minerales
       'vitamina', 'D3', 'B12', 'cobalamina', 'folato',
-      'hierro', 'ferritina', 'anemia',
+      'hierro', 'ferritina',
       'magnesio', 'potasio', 'calcio', 'zinc', 'selenio',
       // Glucosa / diabetes
-      'glucosa', 'glucemia', 'glicemia',
       'insulina', 'insulinoresistencia',
       'diabetes', 'prediabetes', 'diabético', 'diabetico',
       'HbA1c', 'hemoglobina', 'glicosilada',
-      'índice', 'indice', 'glucémico', 'glucemico', 'carga',
       // Macros
-      'proteína', 'proteina', 'aminoácidos', 'aminoacidos',
+      'proteína', 'proteina',
       'carbohidratos', 'hidratos',
-      'grasas', 'saturadas', 'insaturadas', 'trans',
+      'saturadas', 'insaturadas', 'trans',
       'fructosa', 'sacarosa',
-      'fibra', 'prebióticos', 'prebioticos', 'probióticos', 'probioticos', 'microbiota',
+      'prebióticos', 'prebioticos', 'probióticos', 'probioticos', 'microbiota',
       // Antioxidantes
       'antioxidantes', 'polifenoles', 'flavonoides', 'resveratrol', 'catequinas',
       // Hormonas
