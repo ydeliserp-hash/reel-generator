@@ -1427,14 +1427,21 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // el reel se entrega igual sin cover.
   logger?.info?.('phase 6: generando portada cover.png');
   const coverPath = path.join(sessionDir, 'cover.png');
+  let coverDiagnostic = 'not_attempted';
   try {
     const coverGeminiIdx = spec.segments.length > 1 ? 1 : 0;
     const coverGeminiPath = spec.segments[coverGeminiIdx]?._localPath;
     const titleText = spec.title_badge?.text || '';
     const hookText = (spec.segments[0]?.subtitle_text || '').trim();
+    logger?.info?.(
+      { coverGeminiIdx, coverGeminiPathSet: !!coverGeminiPath, titleTextLen: titleText.length },
+      'cover diag'
+    );
     if (!coverGeminiPath) {
+      coverDiagnostic = `skip_no_image (segments[${coverGeminiIdx}]._localPath = undefined)`;
       logger?.warn?.('cover skip: no hay imagen Gemini disponible para el segmento');
     } else if (!titleText) {
+      coverDiagnostic = 'skip_no_title';
       logger?.warn?.('cover skip: spec sin title_badge.text');
     } else {
       await generateCoverImage({
@@ -1445,8 +1452,10 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
         hook: hookText,
         fontDir,
       }, logger);
+      coverDiagnostic = 'generated';
     }
   } catch (e) {
+    coverDiagnostic = 'failed: ' + (e.message || 'unknown').slice(0, 300);
     // NO truncar: necesitamos el stderr de ffmpeg completo para diagnosticar.
     logger?.warn?.({ err: e.message }, 'cover image generation failed (reel sigue OK)');
   }
@@ -1459,6 +1468,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       audio_duration: audioDurationProbed ?? spec.duration ?? null,
       segment_count: spec.segments.length,
       elapsed_ms: elapsedMs,
+      cover_diagnostic: coverDiagnostic,
     },
   };
 }

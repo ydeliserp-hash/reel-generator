@@ -784,6 +784,14 @@ btnGenerate.addEventListener('click',async()=>{
           coverDl.style.display='block';
         }
       }catch(_){}
+    }else{
+      // Diagnostico para saber por que no se genero la portada
+      const diag=data.metadata?.cover_diagnostic||'desconocido';
+      console.warn('Portada no disponible. Diagnostico:',diag);
+      const diagEl=document.createElement('div');
+      diagEl.style.cssText='color:#9ec3e8;font-size:12px;margin-top:8px;padding:8px;background:rgba(0,0,0,0.3);border-radius:6px';
+      diagEl.textContent='⚠ Portada no generada. Motivo: '+diag;
+      downloadDiv.appendChild(diagEl);
     }
     msg2.textContent='Descargando MP4...';
     const dl=await fetch(data.output_url);
