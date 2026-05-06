@@ -932,8 +932,14 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
     ? `volume=${voiceBoost},${voiceNorm}`
     : `volume=${voiceBoost}`;
 
+  // Loop perfecto: fade in/out a negro en los bordes del video final.
+  // Cuando IG hace loop, negro → negro = transicion invisible y el reel
+  // suma segundos de retencion automaticos (el algoritmo lo premia).
+  const loopFadeDur = 0.4;
+  const loopFadeOutStart = Math.max(0, totalDuration - loopFadeDur);
   const filterParts = [
-    `[0:v][1:v]xfade=transition=fade:duration=${transitionDuration}:offset=${offset.toFixed(3)}[v]`,
+    `[0:v][1:v]xfade=transition=fade:duration=${transitionDuration}:offset=${offset.toFixed(3)}[vmix]`,
+    `[vmix]fade=t=in:st=0:d=${loopFadeDur},fade=t=out:st=${loopFadeOutStart.toFixed(3)}:d=${loopFadeDur}[v]`,
     `[0:a][1:a]acrossfade=d=${transitionDuration}[avoice]`,
   ];
   if (useMusic) {
