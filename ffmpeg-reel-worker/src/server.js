@@ -393,6 +393,10 @@ app.post('/transcribe', (req, res, next) => {
   form.append('model', 'whisper-large-v3-turbo');
   form.append('response_format', 'verbose_json');
   form.append('language', language);
+  // Pedir tanto segments como WORDS individuales con timestamps para que el
+  // nodo "Segment Transcript" pueda cortar en signos de puntuacion reales.
+  form.append('timestamp_granularities[]', 'segment');
+  form.append('timestamp_granularities[]', 'word');
   if (prompt) form.append('prompt', prompt);
 
   let groqRes;
