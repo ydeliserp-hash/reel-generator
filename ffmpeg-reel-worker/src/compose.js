@@ -306,53 +306,34 @@ async function buildImageSegment(
   const dy = scaledH - cropH;   // margen vertical para pan
   const dur = Math.max(duration, 0.1);
 
-  // 4 variantes alternadas por segIndex para variedad visual.
-  // Variants 0/2/3: crop con tamano fijo y posicion variable (pan).
-  // Variant 1: crop con TAMANO variable + scale (zoom in real).
+  // 4 variantes alternadas por segIndex para variedad visual. Todas usan
+  // el mismo patron crop con posicion variable. Variant 1 (que antes era
+  // "zoom in centrado") la convertimos en pan vertical para tener movimiento
+  // real — el crop con tamano variable + scale era inestable en runtime.
   const variant = segIndex % 4;
-  let assetFilter;
-  if (variant === 1) {
-    // Zoom in: empieza con crop a tamano completo (scaledW x scaledH) y
-    // termina con crop al ~80% del tamano, centrado, despues escala a output.
-    // El % de zoom = (1 - 0.8)*100 = 20% de zoom-in.
-    const zoomPct = 0.20;
-    const wEnd = Math.round(scaledW * (1 - zoomPct));
-    const hEnd = Math.round(scaledH * (1 - zoomPct));
-    const wDelta = scaledW - wEnd;
-    const hDelta = scaledH - hEnd;
-    assetFilter = [
-      `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
-      `crop=${scaledW}:${scaledH}`,
-      // Crop con w/h variables (decrecientes), centrado
-      `crop=` +
-        `w='${scaledW}-${wDelta}*t/${dur}':` +
-        `h='${scaledH}-${hDelta}*t/${dur}':` +
-        `x='(in_w-out_w)/2':` +
-        `y='(in_h-out_h)/2'`,
-      // Escalar al tamano final del asset area
-      `scale=${cropW}:${cropH}`,
-    ].join(',');
+  let cropX, cropY;
+  if (variant === 0) {
+    // Pan izq -> der
+    cropX = `${dx}*t/${dur}`;
+    cropY = `${Math.round(dy / 2)}`;
+  } else if (variant === 1) {
+    // Pan vertical arriba -> abajo (sustituye al "zoom in" que estaba broken)
+    cropX = `${Math.round(dx / 2)}`;
+    cropY = `${dy}*t/${dur}`;
+  } else if (variant === 2) {
+    // Pan der -> izq
+    cropX = `${dx}-${dx}*t/${dur}`;
+    cropY = `${Math.round(dy / 2)}`;
   } else {
-    let cropX, cropY;
-    if (variant === 0) {
-      // Pan izq -> der
-      cropX = `${dx}*t/${dur}`;
-      cropY = `${Math.round(dy / 2)}`;
-    } else if (variant === 2) {
-      // Pan der -> izq
-      cropX = `${dx}-${dx}*t/${dur}`;
-      cropY = `${Math.round(dy / 2)}`;
-    } else {
-      // Drift diagonal (arriba-izq -> abajo-der)
-      cropX = `${dx}*t/${dur}`;
-      cropY = `${dy}*t/${dur}`;
-    }
-    assetFilter = [
-      `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
-      `crop=${scaledW}:${scaledH}`,
-      `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
-    ].join(',');
+    // Drift diagonal (arriba-izq -> abajo-der)
+    cropX = `${dx}*t/${dur}`;
+    cropY = `${dy}*t/${dur}`;
   }
+  const assetFilter = [
+    `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
+    `crop=${scaledW}:${scaledH}`,
+    `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
+  ].join(',');
   const filterComplex = [
     `[0:v]scale=${W}:${H}[bg]`,
     `[1:v]${assetFilter}[asset]`,
@@ -642,21 +623,10 @@ async function applyOverlays(
     if (popEnd > seg.end - 0.05) popEnd = seg.end - 0.05;
     if (popEnd - popStart < 0.3) continue; // demasiado corto, skip
 
-    // Alpha animada: 0 antes y despues, fade in [popStart, popStart+fadeDur],
-    // hold [popStart+fadeDur, popEnd-fadeDur], fade out [popEnd-fadeDur, popEnd].
-    const alphaExpr =
-      `if(between(t\\,${popStart}\\,${popEnd})\\,` +
-        `if(lt(t\\,${popStart}+${fadeDur})\\,` +
-          `(t-${popStart})/${fadeDur}\\,` +
-          `if(gt(t\\,${popEnd}-${fadeDur})\\,` +
-            `(${popEnd}-t)/${fadeDur}\\,` +
-            `1)` +
-        `)\\,` +
-        `0)`;
-
-    // Pop: numero MUY grande, dorado, con outline negro grueso para
-    // legibilidad sobre cualquier fondo. Centrado verticalmente en el
-    // area del asset (mitad de la imagen).
+    // Pop: numero MUY grande, dorado, con outline negro grueso + sombra para
+    // legibilidad sobre cualquier fondo. Centrado verticalmente en el area
+    // del asset (mitad de la imagen). Hard on/off via enable=between(t,...)
+    // (mismo patron que el title_badge — es la sintaxis mas estable).
     const popFontSize = 220;
     const popY = Math.round(ASSET_TOP_Y + ASSET_AREA_HEIGHT / 2 - popFontSize / 2);
     const popDraw = [
@@ -664,12 +634,15 @@ async function applyOverlays(
       `text='${escapeFilterSingleQuoted(popRaw)}'`,
       `fontsize=${popFontSize}`,
       `fontcolor=${goldColor}`,
-      `borderw=8:bordercolor=black@0.95`,
-      `shadowcolor=black@0.6:shadowx=6:shadowy=6`,
+      `borderw=8`,
+      `bordercolor=black@0.95`,
+      `shadowcolor=black@0.6`,
+      `shadowx=6`,
+      `shadowy=6`,
       `x=(w-text_w)/2`,
       `y=${popY}`,
-      `alpha='${alphaExpr}'`,
       `expansion=none`,
+      `enable='between(t,${popStart.toFixed(3)},${popEnd.toFixed(3)})'`,
     ].join(':');
     filters.push(popDraw);
   }
