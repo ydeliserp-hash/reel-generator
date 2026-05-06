@@ -506,48 +506,90 @@ async function applyOverlays(
   if (titleBadge?.show && titleBadge.text) {
     const dur = typeof titleBadge.duration === 'number' && titleBadge.duration > 0
       ? titleBadge.duration
-      : null; // null = siempre visible
+      : null;
     const baseSize = BRAND.title_badge.font_size;
     const padH = BRAND.title_badge.horizontal_padding;
     const padV = BRAND.title_badge.vertical_padding;
-    // Margen lateral minimo a cada lado del badge respecto al borde del video.
+    const lineSpacing = BRAND.title_badge.line_spacing ?? 1.15;
     const sideMargin = 40;
     const maxBadgeW = BRAND.video.width - 2 * sideMargin;
     const maxTextW = maxBadgeW - 2 * padH;
-    // Aproximacion de ancho de texto en Montserrat Bold mayusculas.
     const charWidthFactor = 0.58;
-    const wantTextW = titleBadge.text.length * baseSize * charWidthFactor;
-    // Auto-shrink: si el texto base no cabe, reducimos fontsize hasta que quepa
-    // (con limite minimo legible). Asi drawbox y drawtext usan el mismo
-    // tamano y el badge no queda mas estrecho que su texto.
-    let fontSize = baseSize;
-    if (wantTextW > maxTextW) {
-      fontSize = Math.max(28, Math.floor(maxTextW / (titleBadge.text.length * charWidthFactor)));
+    const text = titleBadge.text;
+
+    // Helper: estima ancho del texto en pixeles
+    const estimateW = (str, size) => str.length * size * charWidthFactor;
+
+    // Helper: parte un texto en 2 lineas equilibradas (sin cortar palabras).
+    // Devuelve [line1, line2] o null si no se puede partir.
+    function splitTwoLines(str) {
+      const words = str.trim().split(/\s+/);
+      if (words.length < 2) return null;
+      let bestSplit = -1;
+      let bestDiff = Infinity;
+      for (let i = 1; i < words.length; i++) {
+        const a = words.slice(0, i).join(' ');
+        const b = words.slice(i).join(' ');
+        const diff = Math.abs(a.length - b.length);
+        if (diff < bestDiff) { bestDiff = diff; bestSplit = i; }
+      }
+      if (bestSplit < 1) return null;
+      return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
     }
+
+    // Decidir layout: 1 linea con baseSize, 2 lineas con baseSize, o
+    // auto-shrink en 2 lineas (ultimo recurso).
+    let lines;
+    let fontSize = baseSize;
+    if (estimateW(text, baseSize) <= maxTextW) {
+      lines = [text];
+    } else {
+      const split = splitTwoLines(text);
+      if (split && Math.max(estimateW(split[0], baseSize), estimateW(split[1], baseSize)) <= maxTextW) {
+        lines = split;
+      } else if (split) {
+        // Reducir fontsize manteniendo 2 lineas
+        const longest = Math.max(split[0].length, split[1].length);
+        fontSize = Math.max(28, Math.floor(maxTextW / (longest * charWidthFactor)));
+        lines = split;
+      } else {
+        // No se puede partir (1 sola palabra muy larga): shrink 1 linea
+        fontSize = Math.max(28, Math.floor(maxTextW / (text.length * charWidthFactor)));
+        lines = [text];
+      }
+    }
+
+    const numLines = lines.length;
+    const longestLineLen = Math.max(...lines.map((l) => l.length));
     const badgeWidth = Math.min(
       maxBadgeW,
-      Math.round(titleBadge.text.length * fontSize * charWidthFactor + padH * 2)
+      Math.round(longestLineLen * fontSize * charWidthFactor + padH * 2)
     );
-    const badgeHeight = fontSize + padV * 2;
+    const lineGap = Math.round(fontSize * lineSpacing);
+    const badgeHeight = fontSize * numLines + (numLines - 1) * (lineGap - fontSize) + padV * 2;
     const badgeY = pctY(BRAND.positions.title_badge_y_pct);
     const badgeX = Math.round((BRAND.video.width - badgeWidth) / 2);
     const enableClause = dur ? `:enable='lt(t,${dur})'` : '';
+
+    // Caja de fondo
     filters.push(
       `drawbox=x=${badgeX}:y=${badgeY}:w=${badgeWidth}:h=${badgeHeight}:color=${navyColor}:t=fill${enableClause}`
     );
-    const drawtextParts = [
-      `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
-      `text='${escapeFilterSingleQuoted(titleBadge.text)}'`,
-      `fontsize=${fontSize}`,
-      `fontcolor=${goldColor}`,
-      'x=(w-text_w)/2',
-      `y=${badgeY + padV}`,
-      // expansion=none: el texto se dibuja literal. Protege contra interpretacion
-      // de %{...} (variables ffmpeg) si el titulo trae simbolos como %.
-      'expansion=none',
-    ];
-    if (dur) drawtextParts.push(`enable='lt(t,${dur})'`);
-    filters.push(drawtextParts.join(':'));
+    // Un drawtext por cada linea (mas predecible que \\n dentro de drawtext)
+    for (let i = 0; i < numLines; i++) {
+      const lineY = badgeY + padV + i * lineGap;
+      const drawtextParts = [
+        `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
+        `text='${escapeFilterSingleQuoted(lines[i])}'`,
+        `fontsize=${fontSize}`,
+        `fontcolor=${goldColor}`,
+        'x=(w-text_w)/2',
+        `y=${lineY}`,
+        'expansion=none',
+      ];
+      if (dur) drawtextParts.push(`enable='lt(t,${dur})'`);
+      filters.push(drawtextParts.join(':'));
+    }
   }
 
   const vf = filters.join(',');
