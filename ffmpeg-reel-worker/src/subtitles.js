@@ -142,6 +142,7 @@ export function splitIntoChunks(text, maxChars, maxLines) {
 /**
  * Construye una linea Dialogue ASS, con word-wrap interno usando `\N`.
  * Aplica highlight de keywords si esta configurado en BRAND.subtitle.
+ * (Modo clasico — frase completa visible desde el inicio.)
  */
 function buildDialogueLine(start, end, text, highlightCtx) {
   const lines = wrapToLines(text, BRAND.subtitle.max_chars_per_line);
@@ -163,6 +164,97 @@ function buildDialogueLine(start, end, text, highlightCtx) {
     );
   }
   return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${escaped}`;
+}
+
+/**
+ * Resalta una palabra individual SI coincide con un keyword (con dedupe a
+ * nivel reel) o con el patron de numero. Usado en modo kinetic donde
+ * iteramos palabra-a-palabra. Retorna el ASS escapado con o sin tags de color.
+ *
+ * @param {string} word Palabra individual (sin espacios).
+ * @param {object} ctx Contexto: keywordsSet, alreadyHighlighted (Set), highlightColorTag, defaultColorTag.
+ */
+function highlightWordIfMatch(word, ctx) {
+  if (!ctx) return escapeAssText(word);
+  // Separar prefijo/sufijo de puntuacion ("¿8%?" -> "¿" + "8%" + "?")
+  const m = word.match(/^([^\p{L}\d]*)([\p{L}\d.,%]+)([^\p{L}\d]*)$/u);
+  if (!m) return escapeAssText(word);
+  const [, prefix, core, suffix] = m;
+  if (!core) return escapeAssText(word);
+
+  const norm = core.toLowerCase();
+  const isKeyword = ctx.keywordsSet?.has(norm);
+  const isNumber = /^\d{1,4}([.,]\d{1,3})?%?$/.test(core);
+
+  let shouldHighlight = false;
+  if (isKeyword && !ctx.alreadyHighlighted.has(norm)) {
+    ctx.alreadyHighlighted.add(norm);
+    shouldHighlight = true;
+  }
+  if (isNumber) shouldHighlight = true;
+
+  if (shouldHighlight) {
+    return (
+      escapeAssText(prefix) +
+      `{\\c${ctx.highlightColorTag}}${escapeAssText(core)}{\\c${ctx.defaultColorTag}}` +
+      escapeAssText(suffix)
+    );
+  }
+  return escapeAssText(word);
+}
+
+/**
+ * Construye una linea Dialogue ASS en modo KINETIC TYPOGRAPHY: cada palabra
+ * aparece (fade in via \alpha+\t) en su momento estimado segun la posicion
+ * que ocupa dentro del chunk. El layout esta fijado desde el inicio (las
+ * palabras estan ya en su posicion final, solo invisibles via \alpha&HFF&)
+ * para evitar saltos de layout cuando aparecen.
+ *
+ * Sin word timestamps de Whisper: el tiempo de aparicion se estima como
+ * proporcion de chars acumulados (suficientemente preciso para reveal —
+ * sin necesitar lip-sync).
+ */
+function buildKineticDialogueLine(start, end, text, highlightCtx) {
+  const lines = wrapToLines(text, BRAND.subtitle.max_chars_per_line);
+  const visibleLines = lines.slice(0, BRAND.subtitle.max_lines);
+  const overflow = lines.slice(BRAND.subtitle.max_lines).join(' ');
+  if (overflow && visibleLines.length > 0) {
+    visibleLines[visibleLines.length - 1] += ' ' + overflow;
+  } else if (overflow) {
+    visibleLines.push(overflow);
+  }
+
+  // Palabras por linea
+  const wordsPerLine = visibleLines.map((l) => l.split(/\s+/).filter(Boolean));
+  const allWords = wordsPerLine.flat();
+  if (allWords.length === 0) return null;
+
+  // Total de chars (solo palabras, sin espacios) para distribucion proporcional
+  const totalChars = allWords.reduce((sum, w) => sum + w.length, 0) || 1;
+  const durationMs = Math.max(0, Math.round((end - start) * 1000));
+  const fadeMs = 110; // duracion del fade in de cada palabra
+
+  let cumChars = 0;
+  let result = '';
+  for (let lineIdx = 0; lineIdx < wordsPerLine.length; lineIdx++) {
+    if (lineIdx > 0) result += '\\N';
+    const wordsInLine = wordsPerLine[lineIdx];
+    for (let wIdx = 0; wIdx < wordsInLine.length; wIdx++) {
+      const word = wordsInLine[wIdx];
+      const revealStart = Math.round((cumChars / totalChars) * durationMs);
+      const revealEnd = Math.min(durationMs, revealStart + fadeMs);
+      // Resaltado por palabra (keywords/numeros)
+      const wordContent = highlightWordIfMatch(word, highlightCtx);
+      // Tag block: arranca invisible y anima a opaco entre revealStart..revealEnd
+      result += `{\\alpha&HFF&\\t(${revealStart},${revealEnd},\\alpha&H00&)}${wordContent}`;
+      // Espacio entre palabras (heredando alpha del estado previo — cuando
+      // la palabra previa ya esta visible, el espacio aparece automaticamente).
+      if (wIdx < wordsInLine.length - 1) result += ' ';
+      cumChars += word.length;
+    }
+  }
+
+  return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${result}`;
 }
 
 /**
@@ -208,13 +300,22 @@ export function buildAssContent(segments, offsetSeconds = 0) {
   // Contexto de highlight: keywords + numeros (estadisticas, %, cifras).
   // alreadyHighlighted es un Set compartido por todo el reel para que cada
   // keyword se resalte SOLO la primera vez que aparece. Numeros siempre.
+  // keywordsSet (lowercase) sirve para el modo kinetic (matching por palabra).
+  // regex sigue ahi para el modo classic (buildDialogueLine).
   const keywords = BRAND.subtitle?.highlight_keywords || [];
   const highlightCtx = {
     regex: buildHighlightRegex(keywords),
+    keywordsSet: new Set(keywords.map((k) => String(k).toLowerCase())),
     highlightColorTag: assColorInline(BRAND.subtitle.highlight_color || BRAND.colors.accent_gold),
     defaultColorTag: assColorInline(BRAND.colors.text_primary),
     alreadyHighlighted: new Set(),
   };
+
+  // Modo kinetic typography: cada palabra hace fade in en su momento estimado
+  // (proporcion de chars acumulados dentro del chunk). Subir engagement vs.
+  // mostrar la frase completa de golpe. Se puede desactivar con
+  // BRAND.subtitle.kinetic = false (default true).
+  const kineticMode = BRAND.subtitle?.kinetic !== false;
 
   const events = [];
   for (const seg of segments) {
@@ -239,7 +340,10 @@ export function buildAssContent(segments, offsetSeconds = 0) {
       const portion = (chunks[i].length / totalChars) * segDuration;
       const chunkStart = cursor;
       const chunkEnd = isLast ? seg.end : cursor + portion;
-      events.push(buildDialogueLine(chunkStart + offsetSeconds, chunkEnd + offsetSeconds, chunks[i], highlightCtx));
+      const line = kineticMode
+        ? buildKineticDialogueLine(chunkStart + offsetSeconds, chunkEnd + offsetSeconds, chunks[i], highlightCtx)
+        : buildDialogueLine(chunkStart + offsetSeconds, chunkEnd + offsetSeconds, chunks[i], highlightCtx);
+      if (line) events.push(line);
       cursor = chunkEnd;
     }
   }
