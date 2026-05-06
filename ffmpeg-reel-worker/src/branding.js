@@ -68,7 +68,7 @@ export const BRAND = {
     duration: 3.5,                        // segundos del clip outro al final
     logo_file: 'logo_firma.png',          // en assets/overlays/
     logo_width_pct: 0.85,                 // ~918 px de ancho (sobre 1080) — mas grande aun
-    logo_y_pct: 0.43,                     // CENTRO vertical del logo (~580 px) — mas abajo que antes
+    logo_y_pct: 0.32,                     // CENTRO vertical del logo (~432 px = 2/4 superior)
     logo_fade_in_duration: 0.7,           // segundos de fade-in del logo
     backdrop_color: '#0A1F3D',            // navy de marca (fallback)
     // Slogan: PNG pre-disenado por la doctora (slogan_reel.png en assets/overlays/).
