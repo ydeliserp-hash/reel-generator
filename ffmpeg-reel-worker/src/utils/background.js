@@ -182,67 +182,24 @@ export async function ensureGradientBackground(outputPath, logger) {
 }
 
 /**
- * Pre-renderiza un PNG con la frase cursiva sobre fondo transparente, del
- * mismo ancho que el video (asi el centrado se hereda automaticamente al
- * overlayar). Lo usa ensureOutroClip para hacer el efecto typing via crop
- * dinamico (mas barato que apilar 50 drawtexts).
- *
- * Drop shadow integrado: el shadow se renderiza primero (texto en negro con
- * boxblur) y luego el texto en color encima. Esto garantiza legibilidad
- * sobre cualquier fondo.
- */
-export async function ensureOutroPhrasePng(params, logger) {
-  const {
-    outputPath, videoW, fontFile, phraseText, phraseFontSize, phraseColor,
-    shadowOffsetX, shadowOffsetY, shadowBlur, shadowAlpha,
-  } = params;
-  const textColor = `0x${phraseColor.replace('#', '').toUpperCase()}`;
-  const fontFilePosix = fontFile.replace(/\\/g, '/');
-  const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-  // Alto del PNG: 1.6x el fontsize cubre fontsize + descender + sombra sin
-  // recortar. Antes era 2x para el blur, pero ahora la sombra no se blurea.
-  const phraseH = Math.round(phraseFontSize * 1.6);
-  // Usamos shadowx/shadowy/shadowcolor NATIVOS de drawtext en vez de un
-  // segundo drawtext + boxblur. Asi la sombra se renderiza solo bajo cada
-  // glifo (no crea bandas oscuras horizontales como hacia el blur del fondo
-  // transparente al difuminarse).
-  const shadowColorArg = `black@${shadowAlpha}`;
-  try {
-    await runFfmpeg([
-      '-y',
-      '-f', 'lavfi',
-      '-i', `color=c=black@0:s=${videoW}x${phraseH}:r=1:d=1`,
-      '-vf', `drawtext=fontfile='${escapeArg(fontFilePosix)}':text='${escapeArg(phraseText)}':fontsize=${phraseFontSize}:fontcolor=${textColor}:shadowcolor=${shadowColorArg}:shadowx=${shadowOffsetX}:shadowy=${shadowOffsetY}:x=(w-text_w)/2:y=(h-text_h)/2,format=rgba`,
-      '-frames:v', '1',
-      outputPath,
-    ]);
-    const s = await stat(outputPath);
-    logger?.info?.({ outputPath, bytes: s.size, videoW, phraseH }, 'outro phrase PNG pre-rendered with shadow');
-    return { path: outputPath, height: phraseH };
-  } catch (e) {
-    logger?.warn?.({ err: e.message }, 'outro phrase PNG pre-render failed');
-    return null;
-  }
-}
-
-/**
  * Pre-renderiza el CLIP MP4 outro completo:
- *   - Fondo: bg_gradient.png (mismo estilo del reel) escalado y loopeado
- *   - Logo: PNG resized con fade-in alpha animado (0 → logo_fade_in_duration)
- *   - Frase: PNG pre-renderizado con crop horizontal dinamico (efecto typing)
+ *   - Fondo: bg pattern del reel (mismo estilo, continuidad visual)
+ *   - Logo: PNG resized con fade-in alpha animado y drop shadow blureado
+ *   - Slogan: PNG pre-disenado por la doctora con fade-in alpha
  *   - Audio: silencio
+ *
+ * Tanto logo como slogan se posicionan por su CENTRO vertical (logoY y
+ * sloganY son las coordenadas del centro, no del top-left).
  *
  * Mismos codec/fps/profile que el video principal para que el xfade del
  * paso final pueda concatenarlos limpiamente.
- *
- * Se ejecuta UNA SOLA VEZ al arrancar el worker.
  */
 export async function ensureOutroClip(params, logger) {
   const {
     outputPath, videoW, videoH, fps, duration, crf, preset, audioBitrate,
-    bgPath, originalLogoPath, phrasePngPath, phrasePngHeight,
-    logoWidth, logoY, logoFadeInDuration,
-    phraseY, phraseTypingStart, phraseTypingDuration,
+    bgPath, originalLogoPath, sloganPath,
+    logoWidth, logoCenterY, logoFadeInDuration,
+    sloganWidth, sloganCenterY, sloganFadeInStart, sloganFadeInDuration,
     backdropColor,
   } = params;
 
@@ -255,30 +212,29 @@ export async function ensureOutroClip(params, logger) {
   // Filter complex:
   // - Input 0: fondo (bg pattern del reel) (loop)
   // - Input 1: logo PNG (loop)
-  // - Input 2: frase PNG (loop, ya con shadow integrado)
+  // - Input 2: slogan PNG (loop, ya disenado por la doctora)
   // - Input 3: audio silencio
   //
   // Drop shadow del logo: split del logo en 2 streams. Uno se convierte a
   // negro (manteniendo alpha) y se aplica boxblur — esa es la sombra. Se
   // overlayea con offset detras del logo original.
-  const typingEnd = phraseTypingStart + phraseTypingDuration;
+  //
+  // Posicionamiento: en overlay, h se refiere a la altura del overlay
+  // (input secundario), asi 'y=${centerY}-h/2' centra verticalmente el
+  // overlay en centerY.
   const filter = [
     // Fondo: escalar para llenar 1080x1350 manteniendo aspect ratio (cover)
     `[0:v]scale=${videoW}:${videoH}:force_original_aspect_ratio=increase,crop=${videoW}:${videoH},format=yuv420p[bg]`,
     // Logo: split en 2. shadow = negro + blur. logo_main = original con fade-in.
     `[1:v]scale=${logoWidth}:-1,format=rgba,split=2[logo_pre_shadow][logo_pre_main]`,
-    // Generar shadow: colorchannelmixer pone RGB a 0 manteniendo alpha (siluetazo negro),
-    // luego boxblur lo difumina, luego ajustamos alpha multiplicando por shadowAlpha
-    // (via colorchannelmixer aa=shadowAlpha).
     `[logo_pre_shadow]colorchannelmixer=rr=0:gg=0:bb=0:aa=${shadowAlpha},boxblur=${shadowBlur}:1[logo_shadow]`,
-    // Logo principal con fade-in
     `[logo_pre_main]fade=in:st=0:d=${logoFadeInDuration}:alpha=1[logo_main]`,
-    // Frase: fade-in alpha despues del logo (mas robusto que crop con expr)
-    `[2:v]format=rgba,fade=in:st=${phraseTypingStart}:d=${phraseTypingDuration}:alpha=1[phrase]`,
-    // Composicion: bg → shadow del logo (con offset) → logo encima → frase encima
-    `[bg][logo_shadow]overlay=x=(W-w)/2+${shadowOffsetX}:y=${logoY}+${shadowOffsetY}:format=auto[bg_with_shadow]`,
-    `[bg_with_shadow][logo_main]overlay=x=(W-w)/2:y=${logoY}:format=auto[withlogo]`,
-    `[withlogo][phrase]overlay=x=0:y=${phraseY}:enable='gte(t,${phraseTypingStart})':format=auto,format=yuv420p[vout]`,
+    // Slogan: scale + fade-in alpha (sin shadow extra, asume diseno propio)
+    `[2:v]scale=${sloganWidth}:-1,format=rgba,fade=in:st=${sloganFadeInStart}:d=${sloganFadeInDuration}:alpha=1[slogan]`,
+    // Composicion: bg → shadow logo (con offset) → logo → slogan
+    `[bg][logo_shadow]overlay=x=(W-w)/2+${shadowOffsetX}:y=${logoCenterY}-h/2+${shadowOffsetY}:format=auto[bg_with_shadow]`,
+    `[bg_with_shadow][logo_main]overlay=x=(W-w)/2:y=${logoCenterY}-h/2:format=auto[withlogo]`,
+    `[withlogo][slogan]overlay=x=(W-w)/2:y=${sloganCenterY}-h/2:enable='gte(t,${sloganFadeInStart})':format=auto,format=yuv420p[vout]`,
   ].join(';');
 
   try {
@@ -292,10 +248,10 @@ export async function ensureOutroClip(params, logger) {
       '-loop', '1',
       '-t', duration.toString(),
       '-i', originalLogoPath,
-      // Input 2: frase PNG
+      // Input 2: slogan PNG (disenado por la doctora)
       '-loop', '1',
       '-t', duration.toString(),
-      '-i', phrasePngPath,
+      '-i', sloganPath,
       // Input 3: silencio
       '-f', 'lavfi',
       '-t', duration.toString(),

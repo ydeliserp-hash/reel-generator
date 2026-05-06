@@ -67,19 +67,20 @@ export const BRAND = {
     enabled: process.env.OUTRO_ENABLED !== 'false',
     duration: 3.5,                        // segundos del clip outro al final
     logo_file: 'logo_firma.png',          // en assets/overlays/
-    logo_width_pct: 0.55,                 // ~600 px de ancho (sobre 1080)
-    logo_y_pct: 0.30,                     // posicion vertical del logo
+    logo_width_pct: 0.70,                 // ~756 px de ancho (sobre 1080) — mas grande que antes
+    logo_y_pct: 0.32,                     // CENTRO vertical del logo (~432 px = 2/4 superior)
     logo_fade_in_duration: 0.7,           // segundos de fade-in del logo
     backdrop_color: '#0A1F3D',            // navy de marca (fallback)
-    phrase_text: 'La mejor medicina es una buena prevención...',
-    phrase_font_size: 64,
-    phrase_color: '#FFFFFF',
-    phrase_y_pct: 0.62,                   // debajo del logo (mas separacion que antes)
-    phrase_typing_start: 1.0,             // segundo en que arranca el typing
-    phrase_typing_duration: 1.8,          // duracion del typing
+    // Slogan: PNG pre-disenado por la doctora (slogan_reel.png en assets/overlays/).
+    // Se overlayea con fade-in. Si no existe el archivo, el outro se genera
+    // sin slogan (solo logo).
+    slogan_file: 'slogan_reel.png',
+    slogan_width_pct: 0.85,               // ~918 px de ancho
+    slogan_y_pct: 0.62,                   // CENTRO vertical del slogan (~837 px = 3/4 inferior)
+    slogan_fade_in_start: 1.0,            // segundo en que empieza el fade-in del slogan
+    slogan_fade_in_duration: 1.0,         // duracion del fade-in
     transition_duration: 0.5,             // segundos de xfade entre reel y outro
-    // Drop shadow detras del logo y del texto para legibilidad sobre cualquier
-    // pattern. Se aplica via boxblur del alpha + colorchannelmixer a negro.
+    // Drop shadow detras del logo (negro semitransparente blureado).
     shadow_offset_x: 6,
     shadow_offset_y: 6,
     shadow_blur: 14,

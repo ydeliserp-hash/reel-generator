@@ -31,7 +31,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { composeReel } from './compose.js';
-import { ensureGradientBackground, ensureResizedLogo, ensureOutroPhrasePng, ensureOutroClipsForAllPatterns } from './utils/background.js';
+import { ensureGradientBackground, ensureResizedLogo, ensureOutroClipsForAllPatterns } from './utils/background.js';
 import { BRAND, pctY } from './branding.js';
 
 // ---------------------------------------------------------------------------
@@ -582,27 +582,20 @@ async function bootstrap() {
     await ensureResizedLogo(originalLogo, resizedLogo, targetWidth, logger).catch((e) => {
       logger.warn({ err: e.message }, 'logo resize failed (continuing with original)');
     });
-    const cursiveFontFile = path.join(FONT_DIR, BRAND.fonts.file_cursive);
-    const phrasePngPath = path.join(ASSETS_DIR, 'overlays', 'outro_phrase.png');
-    const phraseInfo = await ensureOutroPhrasePng({
-      outputPath: phrasePngPath,
-      videoW: BRAND.video.width,
-      fontFile: cursiveFontFile,
-      phraseText: BRAND.outro.phrase_text,
-      phraseFontSize: BRAND.outro.phrase_font_size,
-      phraseColor: BRAND.outro.phrase_color,
-      shadowOffsetX: BRAND.outro.shadow_offset_x,
-      shadowOffsetY: BRAND.outro.shadow_offset_y,
-      shadowBlur: BRAND.outro.shadow_blur,
-      shadowAlpha: BRAND.outro.shadow_alpha,
-    }, logger).catch((e) => {
-      logger.warn({ err: e.message }, 'outro phrase PNG failed');
-      return null;
-    });
-    if (phraseInfo) {
+    // Slogan: PNG disenado por la doctora. Verificamos que existe antes de
+    // generar los outro_clips. Si no existe, no se generan los outros (los
+    // reels saldran sin outro).
+    const sloganPath = path.join(ASSETS_DIR, 'overlays', BRAND.outro.slogan_file);
+    let sloganExists = false;
+    try {
+      const fs = await import('node:fs/promises');
+      await fs.stat(sloganPath);
+      sloganExists = true;
+    } catch {
+      logger.warn({ sloganPath }, 'slogan file no existe en assets/overlays/, outro skip');
+    }
+    if (sloganExists) {
       // Genera UN outro_clip por pattern (continuidad visual con el reel).
-      // El path es {ASSETS_DIR}/overlays/patterns/outro_clip_N.mp4 — composeReel
-      // calcula N a partir del sessionBgPath y carga el correspondiente.
       const patternsDir = path.join(ASSETS_DIR, 'overlays', 'patterns');
       await ensureOutroClipsForAllPatterns(
         {
@@ -614,14 +607,14 @@ async function bootstrap() {
           preset: BRAND.video.preset,
           audioBitrate: BRAND.video.audio_bitrate,
           originalLogoPath: resizedLogo,
-          phrasePngPath: phraseInfo.path,
-          phrasePngHeight: phraseInfo.height,
+          sloganPath,
           logoWidth: targetWidth,
-          logoY: pctY(BRAND.outro.logo_y_pct),
+          logoCenterY: pctY(BRAND.outro.logo_y_pct),
           logoFadeInDuration: BRAND.outro.logo_fade_in_duration,
-          phraseY: pctY(BRAND.outro.phrase_y_pct),
-          phraseTypingStart: BRAND.outro.phrase_typing_start,
-          phraseTypingDuration: BRAND.outro.phrase_typing_duration,
+          sloganWidth: Math.round(BRAND.video.width * BRAND.outro.slogan_width_pct),
+          sloganCenterY: pctY(BRAND.outro.slogan_y_pct),
+          sloganFadeInStart: BRAND.outro.slogan_fade_in_start,
+          sloganFadeInDuration: BRAND.outro.slogan_fade_in_duration,
           backdropColor: BRAND.outro.backdrop_color,
           shadowOffsetX: BRAND.outro.shadow_offset_x,
           shadowOffsetY: BRAND.outro.shadow_offset_y,
