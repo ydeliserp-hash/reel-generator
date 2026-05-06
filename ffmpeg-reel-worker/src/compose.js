@@ -869,11 +869,13 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   await runWithConcurrency(segmentTasks, maxParallel);
   logger?.info?.({ count: spec.segments.length }, 'phase 1 done');
 
-  // Paso 2: subtitulos .ass. Si hay intro silence, los timestamps se
-  // shiftean +introSilence segundos para que coincidan con la voz delayed.
+  // Paso 2: subtitulos .ass.
+  // El filtro ass se aplica ANTES del tpad (que añade introSilence al
+  // video), asi que los subtitulos se desplazan automaticamente con el
+  // video. NO sumamos offsetSeconds para evitar doble shift.
   const introSilence = BRAND.video.intro_silence_duration ?? 0;
   const subtitlePath = path.join(sessionDir, 'subtitles.ass');
-  await writeSubtitleFile(spec.segments, subtitlePath, introSilence);
+  await writeSubtitleFile(spec.segments, subtitlePath, 0);
 
   // Paso 3: concat con xfade.
   const concatPath = path.join(sessionDir, 'concat.mp4');
