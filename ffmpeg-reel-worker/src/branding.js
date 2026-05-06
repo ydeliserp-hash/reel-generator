@@ -80,23 +80,12 @@ export const BRAND = {
       'frecuencia', 'pulso',
 
       // ===== RIESGO / HABITOS =====
-      'prevención', 'prevencion', 'primaria', 'secundaria',
-      'factor', 'SCORE',
+      'SCORE',
       'alcohol', 'etanol',
-      'tabaco', 'fumar', 'fumador', 'nicotina', 'cigarrillo',
-      'vapeo', 'vapear', 'vaper', 'e-cigarrillo',
-      'ejercicio', 'actividad', 'sedentarismo', 'sedentario',
+      'tabaco',
       'HIIT', 'MICT', 'aeróbico', 'aerobico', 'anaeróbico', 'anaerobico',
-      'fuerza', 'resistencia', 'pasos', 'caminar',
-      'dieta', 'alimentación', 'alimentacion', 'nutrición', 'nutricion',
       'mediterránea', 'mediterranea', 'DASH',
-      'ultraprocesados', 'ultraprocesado', 'procesados',
-      'azúcar', 'azucar', 'sal', 'sodio',
-      'ayuno', 'intermitente',
-      'cronoalimentación', 'cronoalimentacion', 'circadiano', 'ritmo',
-      'desayuno', 'cena', 'almuerzo',
-      'sobrepeso', 'IMC', 'perímetro', 'perimetro', 'cintura',
-      'obesidad', 'obeso',
+      'cronoalimentación', 'cronoalimentacion', 'circadiano',
 
       // ===== BIOQUIMICOS / SUPLEMENTOS =====
       // Lipidos y marcadores
