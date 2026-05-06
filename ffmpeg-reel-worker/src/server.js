@@ -606,7 +606,10 @@ app.get('/curated', async (_req, res) => {
     <div class="card">
       <button id="btnGenerate" class="full">Generar reel</button>
       <div class="status" id="status2"><div class="timer"><span class="spinner"></span><span id="elapsed2">0:00</span></div><div id="msg2">Componiendo...</div></div>
-      <div class="download" id="download"><a id="downloadLink" download="reel.mp4">⬇ Descargar reel</a></div>
+      <div class="download" id="download">
+        <a id="downloadLink" download="reel.mp4">⬇ Descargar reel</a>
+        <a id="downloadCover" download="portada.png" style="background:#F1C40F;color:#0A1F3D;margin-top:8px;display:none">⬇ Descargar portada (Instagram)</a>
+      </div>
     </div>
   </div>
 </div>
@@ -766,7 +769,22 @@ btnGenerate.addEventListener('click',async()=>{
     clearInterval(tick);
     if(!r.ok){const t=await r.text();msg2.innerHTML='<span class="err">Error: '+t.slice(0,400)+'</span>';btnGenerate.disabled=false;btnGenerate.textContent='Generar reel';return}
     const data=await r.json();
-    // Descargar el MP4 con el output_url devuelto
+    // IMPORTANTE: descargar PRIMERO la portada (si existe) y DESPUES el MP4.
+    // El endpoint /output/:sessionId hace cleanup de toda la session tras
+    // servir el MP4, asi que si descargamos el MP4 antes perdemos la portada.
+    const coverDl=document.getElementById('downloadCover');
+    if(data.cover_url){
+      try{
+        msg2.textContent='Descargando portada...';
+        const cv=await fetch(data.cover_url);
+        if(cv.ok){
+          const cvBlob=await cv.blob();
+          coverDl.href=URL.createObjectURL(cvBlob);
+          coverDl.download='portada_'+Date.now()+'.png';
+          coverDl.style.display='block';
+        }
+      }catch(_){}
+    }
     msg2.textContent='Descargando MP4...';
     const dl=await fetch(data.output_url);
     const blob=await dl.blob();
@@ -1423,6 +1441,14 @@ app.post('/compose-curated', curatedUpload, async (req, res) => {
   try {
     const fs = await import('node:fs/promises');
     const stat = await fs.stat(result.outputPath);
+    // Comprobar si la portada (cover.png) existe en la session — la genera
+    // composeReel en su fase 6 (best-effort, puede fallar). Si existe la
+    // exponemos para que el dashboard la pueda descargar.
+    let coverUrl = null;
+    try {
+      await fs.stat(path.join(sessionDir, 'cover.png'));
+      coverUrl = `/assets/${sessionId}/cover.png`;
+    } catch { /* cover no se genero, ignorar */ }
     res.setHeader('X-Session-Id', sessionId);
     res.setHeader('X-Compose-Elapsed-Ms', String(result.metadata.elapsed_ms));
     res.json({
@@ -1431,6 +1457,7 @@ app.post('/compose-curated', curatedUpload, async (req, res) => {
       filename: `reel-${sessionId}.mp4`,
       size_bytes: stat.size,
       output_url: `/output/${sessionId}`,
+      cover_url: coverUrl,
       metadata: result.metadata,
     });
   } catch (err) {
