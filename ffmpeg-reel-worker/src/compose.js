@@ -468,7 +468,7 @@ async function applyOverlays(
   logger
 ) {
   const sigBarColor = ffmpegColorAlpha(BRAND.colors.bg_dark, BRAND.signature.bar_alpha);
-  const sigTextColor = ffmpegColor(BRAND.colors.text_primary);
+  const sigTextColor = ffmpegColor(BRAND.signature.color || BRAND.colors.accent_gold);
   const goldColor = ffmpegColor(BRAND.colors.accent_gold);
   const navyColor = ffmpegColor(BRAND.colors.bg_dark);
 

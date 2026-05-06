@@ -20,13 +20,13 @@ export const BRAND = {
     // (ver Dockerfile + assets/fonts/*.ttf instalados en /usr/share/fonts).
     subtitle: 'Montserrat Black',
     title: 'Montserrat Bold',
-    signature: 'Montserrat Bold',
+    signature: 'Montserrat Regular',
     cursive: 'Great Vibes',
     // Rutas de los .ttf, usadas por el filtro `drawtext` que requiere
     // fontfile=. Se consume desde compose.js parametrizado con FONT_DIR.
     file_subtitle: 'Montserrat-Black.ttf',
     file_title: 'Montserrat-Bold.ttf',
-    file_signature: 'Montserrat-Bold.ttf',
+    file_signature: 'Montserrat-Regular.ttf',
     file_cursive: 'GreatVibes-Regular.ttf',
   },
   // Posiciones expresadas como fraccion del eje vertical (1350 px de alto en 4:5).
@@ -139,7 +139,8 @@ export const BRAND = {
   },
   signature: {
     text: process.env.BRAND_SIGNATURE || '@draydeliserodriguez',
-    font_size: 34,
+    font_size: 26,                       // mas pequena (antes 34)
+    color: '#F1C40F',                    // dorado, igual que el title badge
     bar_height: 70,
     bar_alpha: 0.8,
   },
