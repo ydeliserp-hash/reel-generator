@@ -53,31 +53,21 @@ export const BRAND = {
     highlight_keywords: [
       // ===== CARDIOVASCULAR =====
       // Anatomia / terminos generales
-      'corazón', 'corazon', 'cardíaco', 'cardiaco', 'cardíaca', 'cardiaca',
-      'cardiovascular', 'cardiopatía', 'cardiopatia', 'cardiología', 'cardiologia',
-      'miocardio', 'miocárdico', 'endotelio', 'endotelial', 'vascular',
-      'arteria', 'arterial', 'vena', 'venoso', 'capilar', 'aorta',
-      'válvula', 'valvular', 'pericardio',
+      'cardiovascular',
+      'miocardio', 'miocárdico', 'endotelio',
       // Arritmias y conduccion
       'arritmia', 'arritmias', 'fibrilación', 'fibrilacion',
-      'taquicardia', 'bradicardia', 'palpitaciones', 'extrasístoles', 'extrasistoles',
+      'extrasístoles', 'extrasistoles',
       'flutter',
-      // HTA / presion
-      'hipertensión', 'hipertension', 'hipertenso', 'presión', 'presion',
-      'tensión', 'tension', 'hipotensión', 'hipotension',
       // Eventos agudos
       'infarto', 'IAM', 'síndrome', 'sindrome', 'coronario',
       'ictus', 'ACV', 'trombosis', 'embolia', 'tromboembolismo', 'TEP',
-      'angina', 'angor', 'isquemia', 'isquémico', 'isquemico', 'aneurisma',
       // Lipidos
       'colesterol', 'LDL', 'HDL', 'ApoB', 'lipoproteína', 'lipoproteina', 'Lp(a)',
       'dislipemia', 'dislipidemia', 'triglicéridos', 'trigliceridos',
-      'aterosclerosis', 'ateroma', 'placa', 'calcio',
+      'aterosclerosis', 'ateroma',
       // IC / valvulopatias
-      'insuficiencia', 'estenosis', 'soplo', 'disnea', 'edema',
       'miocardiopatía', 'miocardiopatia', 'pericarditis', 'miocarditis', 'endocarditis',
-      // Sintomas / signos
-      'frecuencia', 'pulso',
 
       // ===== RIESGO / HABITOS =====
       'SCORE',
