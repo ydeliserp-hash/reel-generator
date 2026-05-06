@@ -671,7 +671,10 @@ app.post('/upload', dashboardUpload, async (req, res) => {
   }
   const topic = (req.body?.topic || '').toString();
   const style = (req.body?.style || 'educational').toString();
-  const audioBuffer = req.file.buffer;
+  // El multer global usa diskStorage, asi que el archivo esta en req.file.path
+  // (no en .buffer). Lo leemos del disco antes de reenviar a n8n.
+  const fs = await import('node:fs/promises');
+  const audioBuffer = await fs.readFile(req.file.path);
   const audioName = req.file.originalname || 'audio.mp3';
   const audioMime = req.file.mimetype || 'audio/mpeg';
 
