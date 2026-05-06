@@ -57,25 +57,30 @@ export const BRAND = {
       'miocardio', 'miocárdico', 'endotelio',
       // Arritmias y conduccion
       'arritmia', 'arritmias', 'fibrilación', 'fibrilacion',
+      'arritmogénico', 'arritmogenico', 'arritmogénica', 'arritmogenica',
       'extrasístoles', 'extrasistoles',
-      'flutter',
+      'flutter', 'síncope', 'sincope',
+      'Brugada', 'Takotsubo',
       // Eventos agudos
       'infarto', 'IAM', 'síndrome', 'sindrome', 'coronario',
       'ictus', 'ACV', 'trombosis', 'embolia', 'tromboembolismo', 'TEP',
       // Lipidos
-      'colesterol', 'LDL', 'HDL', 'ApoB', 'lipoproteína', 'lipoproteina', 'Lp(a)',
+      'colesterol', 'hipercolesterolemia',
+      'LDL', 'HDL', 'ApoB', 'lipoproteína', 'lipoproteina', 'Lp(a)',
       'dislipemia', 'dislipidemia', 'triglicéridos', 'trigliceridos',
       'aterosclerosis', 'ateroma',
-      // IC / valvulopatias
+      // IC / valvulopatias / estructural
       'miocardiopatía', 'miocardiopatia', 'pericarditis', 'miocarditis', 'endocarditis',
+      'hipertrófica', 'hipertrofica', 'hipertrofia', 'fibrosis',
 
       // ===== RIESGO / HABITOS =====
-      'SCORE',
+      'SCORE', 'prevención', 'prevencion', 'longevidad', 'autofagia',
       'alcohol', 'etanol',
       'tabaco',
       'HIIT', 'MICT', 'aeróbico', 'aerobico', 'anaeróbico', 'anaerobico',
       'mediterránea', 'mediterranea', 'DASH',
       'cronoalimentación', 'cronoalimentacion', 'circadiano',
+      'grounding', 'naturaleza',
 
       // ===== BIOQUIMICOS / SUPLEMENTOS =====
       // Lipidos y marcadores
@@ -129,6 +134,7 @@ export const BRAND = {
       // ===== OTROS =====
       'cafeína', 'cafeina',
       'chocolate', 'cacao',
+      'aguacate',
     ],
   },
   signature: {
