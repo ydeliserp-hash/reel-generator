@@ -573,7 +573,21 @@ async function applyOverlays(
     const badgeX = Math.round((BRAND.video.width - badgeWidth) / 2);
     const enableClause = dur ? `:enable='lt(t,${dur})'` : '';
 
-    // Caja de fondo
+    // Halo difuminado alrededor de la caja: 3 drawbox concentricos mas grandes
+    // y mas transparentes, simulan un blur gaussiano en los bordes (mismo
+    // truco que el halo de los stat pops). De fuera a dentro.
+    const haloLayers = [
+      { offset: 16, alpha: 0.18 },
+      { offset: 9,  alpha: 0.40 },
+      { offset: 4,  alpha: 0.65 },
+    ];
+    for (const h of haloLayers) {
+      filters.push(
+        `drawbox=x=${badgeX - h.offset}:y=${badgeY - h.offset}:w=${badgeWidth + 2 * h.offset}:h=${badgeHeight + 2 * h.offset}:color=${ffmpegColorAlpha(BRAND.colors.bg_dark, h.alpha)}:t=fill${enableClause}`
+      );
+    }
+
+    // Caja de fondo principal (opaca)
     filters.push(
       `drawbox=x=${badgeX}:y=${badgeY}:w=${badgeWidth}:h=${badgeHeight}:color=${navyColor}:t=fill${enableClause}`
     );
