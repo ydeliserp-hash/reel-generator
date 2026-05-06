@@ -301,7 +301,15 @@ export async function ensureOutroClipsForAllPatterns(commonParams, patternsBaseD
   const generated = [];
   for (let i = 0; i < patterns.length; i++) {
     const bgPath = patterns[i];
-    const outroOutputPath = path.join(patternsBaseDir, `outro_clip_${i}.mp4`);
+    // Nombrar outro_clip_N.mp4 con el MISMO numero del bg_pattern_N.png
+    // (no con el indice del array). El sort lexicografico ponia bg_pattern_10
+    // antes de bg_pattern_2, asi que el indice del array NO coincide con el
+    // numero en el filename. composeReel busca outro_clip_<numero>.mp4 segun
+    // el nombre del bg que toco, asi debe coincidir.
+    const bgBaseName = path.basename(bgPath);
+    const idxMatch = bgBaseName.match(/bg_pattern_(\d+)\.png$/);
+    const outroIdx = idxMatch ? idxMatch[1] : String(i);
+    const outroOutputPath = path.join(patternsBaseDir, `outro_clip_${outroIdx}.mp4`);
     try {
       const result = await ensureOutroClip({
         ...commonParams,
@@ -350,10 +358,16 @@ export async function listBackgroundPatterns(singleFallbackPath, logger) {
   const patternsDir = path.join(path.dirname(singleFallbackPath), 'patterns');
   try {
     const files = await readdir(patternsDir);
+    // Sort NUMERICO por el indice del archivo (bg_pattern_2 antes que
+    // bg_pattern_10, no al reves como hacia el sort lexicografico).
     const pngs = files
       .filter((f) => f.endsWith('.png'))
       .map((f) => path.join(patternsDir, f))
-      .sort();
+      .sort((a, b) => {
+        const numA = parseInt(path.basename(a).match(/(\d+)/)?.[1] || '0', 10);
+        const numB = parseInt(path.basename(b).match(/(\d+)/)?.[1] || '0', 10);
+        return numA - numB;
+      });
     if (pngs.length > 0) return pngs;
   } catch (e) {
     /* directorio no existe */
