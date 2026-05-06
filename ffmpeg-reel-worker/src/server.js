@@ -734,7 +734,7 @@ app.get('/assets/:sessionId', async (req, res) => {
     const files = await fs.readdir(sessionDir);
     // Filtramos a los assets de imagen/video que entraron como input para
     // los segmentos (asset_NN.*, asset_NN_gemini.png, asset_NN_fb.jpg).
-    const assetFiles = files.filter((f) => /^asset_\d+(_gemini|_fb)?\.(png|jpg|jpeg|mp4)$/i.test(f));
+    const assetFiles = files.filter((f) => /^(asset_\d+(_gemini|_fb)?|cover)\.(png|jpg|jpeg|mp4)$/i.test(f));
     const assets = await Promise.all(
       assetFiles.map(async (filename) => {
         const stat = await fs.stat(path.join(sessionDir, filename));

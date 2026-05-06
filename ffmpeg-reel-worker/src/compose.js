@@ -630,6 +630,135 @@ async function applyOverlays(
 }
 
 /**
+ * Genera una imagen de portada (cover.png) para el reel: 1080x1350 con
+ *   - Fondo: pattern del reel (mismo bg que se usa en los segmentos)
+ *   - Imagen Gemini destacada en la parte superior (1000x740, cover-fit)
+ *   - Titulo XXL en dorado, debajo
+ *   - Gancho (primera frase) en blanco, debajo del titulo
+ *   - @signature dorada en esquina inferior izquierda
+ *   - Logo turquesa pequeno en esquina inferior derecha
+ *
+ * Util para subir como portada del reel en Instagram (cuadricula del feed).
+ */
+async function generateCoverImage({
+  outputPath, bgPath, geminiImagePath, logoPath,
+  title, hook, fontDir,
+}, logger) {
+  const W = BRAND.video.width;     // 1080
+  const H = BRAND.video.height;    // 1350
+  const goldHex = ffmpegColor(BRAND.colors.accent_gold);   // 0xF1C40F
+  const whiteHex = ffmpegColor(BRAND.colors.text_primary); // 0xFFFFFF
+  const navyAlpha = ffmpegColorAlpha(BRAND.colors.bg_dark, 0.55);
+  const titleFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_title);
+  const sigFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_signature);
+
+  // Limpiar y truncar el gancho a una linea legible
+  const hookText = String(hook || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const titleText = String(title || '').trim();
+
+  // Layout (en pixels):
+  //   imagen Gemini: y=80 → y=820, ancho 1000 (centrado)
+  //   titulo:        centro vertical y=920 (font 80, max 2 lineas)
+  //   gancho:        centro vertical y=1110 (font 40)
+  //   firma + logo:  y=1280 (firma izq, logo der)
+
+  // Decidir wrap del titulo (1 linea base 80, o 2 lineas equilibradas)
+  function splitTwoLines(str) {
+    const words = str.trim().split(/\s+/);
+    if (words.length < 2) return null;
+    let bestSplit = -1;
+    let bestDiff = Infinity;
+    for (let i = 1; i < words.length; i++) {
+      const a = words.slice(0, i).join(' ');
+      const b = words.slice(i).join(' ');
+      const diff = Math.abs(a.length - b.length);
+      if (diff < bestDiff) { bestDiff = diff; bestSplit = i; }
+    }
+    return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
+  }
+  const charWidthFactor = 0.58;
+  const baseTitleSize = 80;
+  const maxTitleW = W - 80; // margen 40 a cada lado
+  let titleLines;
+  let titleSize = baseTitleSize;
+  if (titleText.length * baseTitleSize * charWidthFactor <= maxTitleW) {
+    titleLines = [titleText];
+  } else {
+    const split = splitTwoLines(titleText);
+    if (split) {
+      const longest = Math.max(split[0].length, split[1].length);
+      if (longest * baseTitleSize * charWidthFactor <= maxTitleW) {
+        titleLines = split;
+      } else {
+        titleSize = Math.max(48, Math.floor(maxTitleW / (longest * charWidthFactor)));
+        titleLines = split;
+      }
+    } else {
+      titleSize = Math.max(48, Math.floor(maxTitleW / (titleText.length * charWidthFactor)));
+      titleLines = [titleText];
+    }
+  }
+
+  const escapeArg = (s) => String(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+
+  // Construir filter_complex:
+  // [0:v] bg pattern  -> escalar/cropear a 1080x1350
+  // [1:v] gemini img  -> escalar a 1000x740 con cover-fit
+  // [2:v] logo PNG    -> escalar a 130 px de ancho
+  // Composicion: bg -> overlay imagen -> drawtext titulo (1 o 2 lineas) ->
+  //              drawtext gancho -> drawtext firma -> overlay logo
+  const filterParts = [
+    `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},format=yuv420p[bg]`,
+    `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba[gemini]`,
+    `[2:v]scale=130:-1,format=rgba[smallLogo]`,
+    `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
+  ];
+  // Titulo (1 o 2 lineas)
+  const titleStartY = 880;
+  const titleLineHeight = Math.round(titleSize * 1.15);
+  let lastV = 'withImg';
+  for (let i = 0; i < titleLines.length; i++) {
+    const lineY = titleStartY + i * titleLineHeight;
+    const outLabel = `withTitle${i}`;
+    filterParts.push(
+      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(titleLines[i])}':fontsize=${titleSize}:fontcolor=${goldHex}:x=(w-text_w)/2:y=${lineY}:expansion=none[${outLabel}]`
+    );
+    lastV = outLabel;
+  }
+  // Gancho (debajo del titulo)
+  const hookY = titleStartY + titleLines.length * titleLineHeight + 30;
+  if (hookText) {
+    filterParts.push(
+      `[${lastV}]drawtext=fontfile='${escapeArg(sigFontFile)}':text='${escapeArg(hookText)}':fontsize=38:fontcolor=${whiteHex}:x=(w-text_w)/2:y=${hookY}:expansion=none[withHook]`
+    );
+    lastV = 'withHook';
+  }
+  // Firma esquina inferior izquierda
+  filterParts.push(
+    `[${lastV}]drawtext=fontfile='${escapeArg(sigFontFile)}':text='${escapeArg('@' + (BRAND.signature.text || '').replace(/^@/, ''))}':fontsize=28:fontcolor=${goldHex}:x=40:y=H-text_h-40:expansion=none[withSig]`
+  );
+  // Logo esquina inferior derecha
+  filterParts.push(
+    `[withSig][smallLogo]overlay=x=W-w-40:y=H-h-30[out]`
+  );
+
+  const filter = filterParts.join(';');
+
+  await runFfmpeg([
+    '-y',
+    '-loop', '1', '-t', '1', '-i', bgPath,
+    '-loop', '1', '-t', '1', '-i', geminiImagePath,
+    '-loop', '1', '-t', '1', '-i', logoPath,
+    '-filter_complex', filter,
+    '-map', '[out]',
+    '-frames:v', '1',
+    outputPath,
+  ], logger, 'cover-image');
+  logger?.info?.({ outputPath, titleLines: titleLines.length }, 'cover image generated');
+  return outputPath;
+}
+
+/**
  * Concatena el video principal con el clip outro pre-renderizado aplicando
  * xfade (transicion fade suave) entre ambos. Requiere reencode (no se puede
  * aplicar xfade con concat demuxer + -c copy), pero solo es un encode rapido
@@ -1029,6 +1158,37 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   }
   // Si !useOutro && !useMusic, applyOverlays ya escribio en finalOutputPath.
   const outputPath = finalOutputPath;
+
+  // Paso 6: generar imagen de portada (cover.png) para subir a Instagram.
+  // Toma el bg pattern del reel + la imagen del segundo segmento (suele ser
+  // la mas representativa) + titulo XXL + gancho. Best-effort: si falla,
+  // el reel se entrega igual sin cover.
+  const coverPath = path.join(sessionDir, 'cover.png');
+  try {
+    const coverGeminiIdx = spec.segments.length > 1 ? 1 : 0;
+    const coverGeminiPath = spec.segments[coverGeminiIdx]?._localPath;
+    const overlaysDir = path.join(process.env.ASSETS_DIR || '/app/assets', 'overlays');
+    const resizedLogo = path.join(overlaysDir, 'logo_firma_resized.png');
+    const originalLogo = path.join(overlaysDir, BRAND.outro?.logo_file || 'logo_firma.png');
+    let logoPathForCover;
+    try { await stat(resizedLogo); logoPathForCover = resizedLogo; }
+    catch { logoPathForCover = originalLogo; }
+    const titleText = spec.title_badge?.text || '';
+    const hookText = (spec.segments[0]?.subtitle_text || '').trim();
+    if (coverGeminiPath && titleText) {
+      await generateCoverImage({
+        outputPath: coverPath,
+        bgPath: sessionBgPath,
+        geminiImagePath: coverGeminiPath,
+        logoPath: logoPathForCover,
+        title: titleText,
+        hook: hookText,
+        fontDir,
+      }, logger);
+    }
+  } catch (e) {
+    logger?.warn?.({ err: e.message?.slice(0, 200) }, 'cover image generation failed (reel sigue OK)');
+  }
 
   const elapsedMs = Date.now() - t0;
   return {
