@@ -13,7 +13,36 @@
  */
 
 import { writeFile } from 'node:fs/promises';
-import { BRAND, assColor, pctY } from './branding.js';
+import { BRAND, assColor, assColorInline, pctY } from './branding.js';
+
+/**
+ * Construye un regex que matchea cualquier palabra de `keywords` (case
+ * insensitive, respetando acentos y bordes de palabra unicode).
+ *
+ * Usa lookbehind/lookahead unicode (`\p{L}`) en lugar de `\b` porque `\b`
+ * en JS no maneja bien letras con tilde.
+ */
+function buildKeywordRegex(keywords) {
+  if (!Array.isArray(keywords) || keywords.length === 0) return null;
+  const escaped = keywords
+    .map((k) => String(k).trim())
+    .filter(Boolean)
+    .map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (escaped.length === 0) return null;
+  // Sin lookbehind/lookahead de letra: matchea palabras con bordes naturales.
+  // Usamos \p{L} unicode property (requiere flag u).
+  return new RegExp(`(?<!\\p{L})(${escaped.join('|')})(?!\\p{L})`, 'giu');
+}
+
+/**
+ * Envuelve cada match de keyword con tags ASS de color (\c&Hcolor&...\c&Hwhite&).
+ * El input ya viene escapado por escapeAssText, asi los tags `{\c...}` que
+ * inyectamos se interpretan como tags ASS (no escapados).
+ */
+function highlightKeywordsInAss(escapedText, regex, highlightColorTag, defaultColorTag) {
+  if (!regex) return escapedText;
+  return escapedText.replace(regex, `{\\c${highlightColorTag}}$1{\\c${defaultColorTag}}`);
+}
 
 /**
  * Convierte segundos a formato ASS: H:MM:SS.cc (centesimas de segundo).
@@ -88,8 +117,9 @@ export function splitIntoChunks(text, maxChars, maxLines) {
 
 /**
  * Construye una linea Dialogue ASS, con word-wrap interno usando `\N`.
+ * Aplica highlight de keywords si esta configurado en BRAND.subtitle.
  */
-function buildDialogueLine(start, end, text) {
+function buildDialogueLine(start, end, text, highlightCtx) {
   const lines = wrapToLines(text, BRAND.subtitle.max_chars_per_line);
   const visibleLines = lines.slice(0, BRAND.subtitle.max_lines);
   const overflow = lines.slice(BRAND.subtitle.max_lines).join(' ');
@@ -98,7 +128,15 @@ function buildDialogueLine(start, end, text) {
   } else if (overflow) {
     visibleLines.push(overflow);
   }
-  const escaped = visibleLines.map(escapeAssText).join('\\N');
+  let escaped = visibleLines.map(escapeAssText).join('\\N');
+  if (highlightCtx?.regex) {
+    escaped = highlightKeywordsInAss(
+      escaped,
+      highlightCtx.regex,
+      highlightCtx.highlightColorTag,
+      highlightCtx.defaultColorTag
+    );
+  }
   return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${escaped}`;
 }
 
@@ -140,6 +178,18 @@ export function buildAssContent(segments) {
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
+  // Preparar contexto de highlight para keywords. Si no hay keywords
+  // configuradas, highlightCtx queda null y los subtitulos salen blancos
+  // como antes.
+  const keywords = BRAND.subtitle?.highlight_keywords || [];
+  const highlightCtx = keywords.length > 0
+    ? {
+        regex: buildKeywordRegex(keywords),
+        highlightColorTag: assColorInline(BRAND.subtitle.highlight_color || BRAND.colors.accent_gold),
+        defaultColorTag: assColorInline(BRAND.colors.text_primary),
+      }
+    : null;
+
   const events = [];
   for (const seg of segments) {
     const text = (seg.subtitle_text || '').trim();
@@ -163,7 +213,7 @@ export function buildAssContent(segments) {
       const portion = (chunks[i].length / totalChars) * segDuration;
       const chunkStart = cursor;
       const chunkEnd = isLast ? seg.end : cursor + portion;
-      events.push(buildDialogueLine(chunkStart, chunkEnd, chunks[i]));
+      events.push(buildDialogueLine(chunkStart, chunkEnd, chunks[i], highlightCtx));
       cursor = chunkEnd;
     }
   }

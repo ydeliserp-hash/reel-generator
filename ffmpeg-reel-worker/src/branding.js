@@ -45,6 +45,33 @@ export const BRAND = {
     max_lines: 2,
     outline_width: 4,
     shadow_offset: 3,
+    // Keywords medicas que se resaltan en color destacado dentro de los
+    // subtitulos. Match case-insensitive con respeto a acentos. Se pueden
+    // anadir/quitar libremente. El highlight_color es el color de marca
+    // (dorado) por default, modificable.
+    highlight_color: '#F1C40F',          // dorado de marca
+    highlight_keywords: [
+      // Cardiovascular
+      'corazon', 'corazón', 'cardiaco', 'cardíaco', 'cardiovascular', 'cardiologo', 'cardiólogo',
+      'arritmia', 'arritmias', 'fibrilacion', 'fibrilación', 'taquicardia', 'bradicardia',
+      'hipertension', 'hipertensión', 'tension', 'tensión', 'presion', 'presión',
+      'colesterol', 'trigliceridos', 'triglicéridos', 'LDL', 'HDL',
+      'infarto', 'ictus', 'ACV', 'angina', 'isquemia',
+      'estatinas', 'anticoagulantes',
+      // Riesgo / habitos
+      'prevencion', 'prevención', 'riesgo', 'mortalidad', 'salud',
+      'alcohol', 'tabaco', 'fumar', 'vapeo', 'vapear', 'cigarrillo',
+      'ejercicio', 'sedentarismo', 'actividad',
+      'dieta', 'nutricion', 'nutrición', 'mediterranea', 'mediterránea',
+      // Bioquimicos / suplementos
+      'omega', 'vitamina', 'magnesio', 'potasio',
+      'glucosa', 'insulina', 'diabetes', 'obesidad', 'sobrepeso',
+      'inflamacion', 'inflamación', 'antioxidantes', 'polifenoles',
+      // Wellbeing
+      'estres', 'estrés', 'sueño', 'descanso', 'meditacion', 'meditación',
+      // Cafe (tema reciente)
+      'cafe', 'café', 'cafeina', 'cafeína',
+    ],
   },
   signature: {
     text: process.env.BRAND_SIGNATURE || '@draydeliserodriguez',
@@ -137,6 +164,18 @@ export function assColor(hex, alpha = 0) {
   const b = clean.slice(4, 6);
   const a = alpha.toString(16).toUpperCase().padStart(2, '0');
   return `&H${a}${b}${g}${r}`;
+}
+
+/**
+ * Convierte `#RRGGBB` al formato de color ASS para inline tags `\c`: `&HBBGGRR&`
+ * (sin alpha, con `&` final). Usado para resaltar palabras dentro del texto.
+ */
+export function assColorInline(hex) {
+  const clean = hex.replace('#', '').toUpperCase().padStart(6, '0');
+  const r = clean.slice(0, 2);
+  const g = clean.slice(2, 4);
+  const b = clean.slice(4, 6);
+  return `&H${b}${g}${r}&`;
 }
 
 /**
