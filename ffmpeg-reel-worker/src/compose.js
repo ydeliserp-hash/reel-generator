@@ -292,10 +292,12 @@ async function buildImageSegment(
   const W = BRAND.video.width;
   const H = BRAND.video.height;
 
-  // Ken Burns ligero: pre-escalo el asset un 20% mas grande que el area,
+  // Ken Burns ligero: pre-escalo el asset un 30% mas grande que el area,
   // luego hago crop animado (pan o zoom) basado en el indice del segmento.
   // Mas barato computacionalmente que zoompan y visualmente equivalente.
-  const preScale = 1.2;
+  // 1.3 (antes 1.2) da un margen mayor para que el movimiento sea claramente
+  // visible — con 1.2 el efecto pasaba casi inadvertido.
+  const preScale = 1.3;
   const cropW = Math.round(W);
   const cropH = ASSET_AREA_HEIGHT;
   const scaledW = Math.round(W * preScale);
@@ -304,35 +306,53 @@ async function buildImageSegment(
   const dy = scaledH - cropH;   // margen vertical para pan
   const dur = Math.max(duration, 0.1);
 
-  // 4 variantes alternadas por segIndex para variedad visual
+  // 4 variantes alternadas por segIndex para variedad visual.
+  // Variants 0/2/3: crop con tamano fijo y posicion variable (pan).
+  // Variant 1: crop con TAMANO variable + scale (zoom in real).
   const variant = segIndex % 4;
-  let cropX, cropY;
-  if (variant === 0) {
-    // Pan izq -> der
-    cropX = `${dx}*t/${dur}`;
-    cropY = `${Math.round(dy / 2)}`;
-  } else if (variant === 1) {
-    // Zoom in (centrado)
-    cropX = `${Math.round(dx / 2)}`;
-    cropY = `${Math.round(dy / 2)}`;
-    // Para zoom usamos scale animada en vez de crop
-  } else if (variant === 2) {
-    // Pan der -> izq
-    cropX = `${dx}-${dx}*t/${dur}`;
-    cropY = `${Math.round(dy / 2)}`;
+  let assetFilter;
+  if (variant === 1) {
+    // Zoom in: empieza con crop a tamano completo (scaledW x scaledH) y
+    // termina con crop al ~80% del tamano, centrado, despues escala a output.
+    // El % de zoom = (1 - 0.8)*100 = 20% de zoom-in.
+    const zoomPct = 0.20;
+    const wEnd = Math.round(scaledW * (1 - zoomPct));
+    const hEnd = Math.round(scaledH * (1 - zoomPct));
+    const wDelta = scaledW - wEnd;
+    const hDelta = scaledH - hEnd;
+    assetFilter = [
+      `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
+      `crop=${scaledW}:${scaledH}`,
+      // Crop con w/h variables (decrecientes), centrado
+      `crop=` +
+        `w='${scaledW}-${wDelta}*t/${dur}':` +
+        `h='${scaledH}-${hDelta}*t/${dur}':` +
+        `x='(in_w-out_w)/2':` +
+        `y='(in_h-out_h)/2'`,
+      // Escalar al tamano final del asset area
+      `scale=${cropW}:${cropH}`,
+    ].join(',');
   } else {
-    // Drift diagonal (arriba-izq -> abajo-der)
-    cropX = `${dx}*t/${dur}`;
-    cropY = `${dy}*t/${dur}`;
+    let cropX, cropY;
+    if (variant === 0) {
+      // Pan izq -> der
+      cropX = `${dx}*t/${dur}`;
+      cropY = `${Math.round(dy / 2)}`;
+    } else if (variant === 2) {
+      // Pan der -> izq
+      cropX = `${dx}-${dx}*t/${dur}`;
+      cropY = `${Math.round(dy / 2)}`;
+    } else {
+      // Drift diagonal (arriba-izq -> abajo-der)
+      cropX = `${dx}*t/${dur}`;
+      cropY = `${dy}*t/${dur}`;
+    }
+    assetFilter = [
+      `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
+      `crop=${scaledW}:${scaledH}`,
+      `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
+    ].join(',');
   }
-
-  // Filter complex: bg_gradient como base, asset con Ken Burns superpuesto
-  // en el area de asset (centrado horizontal, en ASSET_TOP_Y vertical).
-  const assetFilter = [
-    `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase`,
-    `crop=${scaledW}:${scaledH}`,
-    `crop=${cropW}:${cropH}:'${cropX}':'${cropY}'`,
-  ].join(',');
   const filterComplex = [
     `[0:v]scale=${W}:${H}[bg]`,
     `[1:v]${assetFilter}[asset]`,
@@ -464,6 +484,7 @@ async function applyOverlays(
     fontDir,
     outputPath,
     introSilence = 0,        // segundos de silencio + freeze del primer frame al inicio
+    segments = [],           // para detectar numeros y dibujar pops visuales
   },
   logger
 ) {
@@ -590,6 +611,67 @@ async function applyOverlays(
       if (dur) drawtextParts.push(`enable='lt(t,${dur})'`);
       filters.push(drawtextParts.join(':'));
     }
+  }
+
+  // Capa 4: STAT POPS — flash grande del numero/% cuando se "habla" en cada
+  // segmento. Aumenta retencion y crea un "screenshot moment" que se comparte.
+  // Timing: estimado por posicion del char dentro del subtitle_text del
+  // segmento (sin word timestamps de Whisper). Aproximado pero suficiente.
+  // Layout: gran numero dorado con outline negro, en el centro de la imagen.
+  // Fade in/out via expresion de alpha en drawtext.
+  for (const seg of segments) {
+    const text = String(seg.subtitle_text || '');
+    if (!text || typeof seg.start !== 'number' || typeof seg.end !== 'number') continue;
+    // Detectar numeros: 1-4 digitos opcionalmente con decimales y/o %.
+    // Solo el PRIMER numero por segmento (evitar saturar la pantalla).
+    const m = text.match(/(?<![\p{L}\d])\d{1,4}(?:[.,]\d{1,3})?%?(?![\p{L}\d])/u);
+    if (!m) continue;
+    const popRaw = m[0];
+    const charIdx = m.index;
+    const segDur = seg.end - seg.start;
+    if (segDur < 0.5) continue;
+    // Tiempo estimado de cuando se "habla" el numero (proporcional a la
+    // posicion del char en el texto del segmento).
+    const numberSpokenT = seg.start + (charIdx / Math.max(text.length, 1)) * segDur;
+    const popDur = 0.8;        // duracion total del pop en pantalla
+    const fadeDur = 0.18;      // fade in y fade out
+    let popStart = numberSpokenT - 0.05;
+    let popEnd = popStart + popDur;
+    // Asegurar que el pop cabe dentro del segmento
+    if (popStart < seg.start + 0.05) popStart = seg.start + 0.05;
+    if (popEnd > seg.end - 0.05) popEnd = seg.end - 0.05;
+    if (popEnd - popStart < 0.3) continue; // demasiado corto, skip
+
+    // Alpha animada: 0 antes y despues, fade in [popStart, popStart+fadeDur],
+    // hold [popStart+fadeDur, popEnd-fadeDur], fade out [popEnd-fadeDur, popEnd].
+    const alphaExpr =
+      `if(between(t\\,${popStart}\\,${popEnd})\\,` +
+        `if(lt(t\\,${popStart}+${fadeDur})\\,` +
+          `(t-${popStart})/${fadeDur}\\,` +
+          `if(gt(t\\,${popEnd}-${fadeDur})\\,` +
+            `(${popEnd}-t)/${fadeDur}\\,` +
+            `1)` +
+        `)\\,` +
+        `0)`;
+
+    // Pop: numero MUY grande, dorado, con outline negro grueso para
+    // legibilidad sobre cualquier fondo. Centrado verticalmente en el
+    // area del asset (mitad de la imagen).
+    const popFontSize = 220;
+    const popY = Math.round(ASSET_TOP_Y + ASSET_AREA_HEIGHT / 2 - popFontSize / 2);
+    const popDraw = [
+      `drawtext=fontfile='${escapeFilterSingleQuoted(titleFontFile)}'`,
+      `text='${escapeFilterSingleQuoted(popRaw)}'`,
+      `fontsize=${popFontSize}`,
+      `fontcolor=${goldColor}`,
+      `borderw=8:bordercolor=black@0.95`,
+      `shadowcolor=black@0.6:shadowx=6:shadowy=6`,
+      `x=(w-text_w)/2`,
+      `y=${popY}`,
+      `alpha='${alphaExpr}'`,
+      `expansion=none`,
+    ].join(':');
+    filters.push(popDraw);
   }
 
   const vf = filters.join(',');
@@ -1167,6 +1249,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       fontDir,
       outputPath: mainVideoPath,
       introSilence,
+      segments: spec.segments,
     },
     logger
   );

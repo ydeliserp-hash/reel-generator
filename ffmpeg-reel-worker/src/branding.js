@@ -204,7 +204,9 @@ export const BRAND = {
     crf: 21,                       // Mejor calidad (antes 23)
     // Segundos de silencio + freeze del primer frame al inicio del reel.
     // Util para dar tiempo a que aparezca el title badge antes que la voz.
-    intro_silence_duration: 2.0,
+    // 1s es suficiente: el viewer en IG decide si sigue o no en los primeros
+    // 2-3s, asi que conviene arrancar la voz lo antes posible.
+    intro_silence_duration: 1.0,
     preset: 'fast',                // Compresion ~70% mejor que ultrafast
     audio_bitrate: '128k',
     xfade_duration: 0.3,           // Transicion entre segmentos (mas corta = menos desfase imagen-audio)
