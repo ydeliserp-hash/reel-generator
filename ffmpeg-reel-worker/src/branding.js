@@ -213,6 +213,14 @@ export const BRAND = {
     music_dir: 'music',                  // dentro de assets/
     volume: 0.15,                        // 0..1 (15% volumen)
     voice_boost: 1.4,                    // multiplicador del volumen de la voz (1.0 = sin cambio)
+    // dynaudnorm: normaliza dinamicamente el volumen de la voz, subiendo
+    // las partes bajas. Necesario para compensar ElevenLapse que reduce
+    // el volumen progresivamente. Pon a null para desactivar.
+    //   f=200  : frame de 200ms (rapido para detectar cambios)
+    //   g=15   : ventana de 15 frames (suaviza transiciones)
+    //   p=0.9  : peak target 90% (sin clipping)
+    //   m=10   : max amplification 10x
+    voice_normalize: 'dynaudnorm=f=200:g=15:p=0.9:m=10',
     fade_in_duration: 1.0,               // segundos de fade-in al inicio
     fade_out_duration: 1.5,              // segundos de fade-out al final
   },

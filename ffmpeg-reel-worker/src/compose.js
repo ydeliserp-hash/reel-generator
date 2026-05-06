@@ -595,9 +595,15 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
   const m = BRAND.background_music || {};
   const musicVol = m.volume ?? 0.10;
   const voiceBoost = m.voice_boost ?? 1.0;
+  const voiceNorm = m.voice_normalize || null;
   const fadeIn = m.fade_in_duration ?? 1.0;
   const fadeOut = m.fade_out_duration ?? 1.5;
   const fadeOutStart = Math.max(0, totalDuration - fadeOut);
+
+  // Cadena de procesado de la voz: boost + normalizacion dinamica opcional.
+  const voiceChain = voiceNorm
+    ? `volume=${voiceBoost},${voiceNorm}`
+    : `volume=${voiceBoost}`;
 
   const filterParts = [
     `[0:v][1:v]xfade=transition=fade:duration=${transitionDuration}:offset=${offset.toFixed(3)}[v]`,
@@ -605,15 +611,17 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
   ];
   if (useMusic) {
     // Input 2 = musica (con loop infinito por -stream_loop -1).
-    // Aplicamos volumen, fade-in al inicio y fade-out al final del reel total.
-    // amix con normalize=0 NO baja el volumen de los inputs (sino que por
-    // defecto los normaliza dividiendo por N=2). Asi la voz se oye fuerte.
-    // Boost de voz adicional (voice_boost) para asegurarnos.
+    // amix con normalize=0 NO baja el volumen de los inputs.
+    // dynaudnorm sobre la voz iguala dinamicamente el volumen (sube partes
+    // bajas, mantiene altas) — compensa ElevenLapse que decrece la voz.
     filterParts.push(
-      `[avoice]volume=${voiceBoost}[avoice_amp]`,
+      `[avoice]${voiceChain}[avoice_amp]`,
       `[2:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q]`,
       `[avoice_amp][music_q]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
     );
+  } else {
+    // Sin musica: aplicamos voice chain directo a la voz
+    filterParts.push(`[avoice]${voiceChain}[a]`);
   }
   const filter = filterParts.join(';');
 
@@ -628,7 +636,7 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
   args.push(
     '-filter_complex', filter,
     '-map', '[v]',
-    '-map', useMusic ? '[a]' : '[avoice]',
+    '-map', '[a]',
     '-c:v', 'libx264',
     '-preset', BRAND.video.preset,
     '-crf', BRAND.video.crf.toString(),
@@ -652,15 +660,17 @@ async function applyMusicOnly(mainVideoPath, outputPath, mainDuration, musicPath
   const m = BRAND.background_music || {};
   const musicVol = m.volume ?? 0.10;
   const voiceBoost = m.voice_boost ?? 1.0;
+  const voiceNorm = m.voice_normalize || null;
   const fadeIn = m.fade_in_duration ?? 1.0;
   const fadeOut = m.fade_out_duration ?? 1.5;
   const fadeOutStart = Math.max(0, mainDuration - fadeOut);
+  const voiceChain = voiceNorm ? `volume=${voiceBoost},${voiceNorm}` : `volume=${voiceBoost}`;
   await runFfmpeg([
     '-y',
     '-i', mainVideoPath,
     '-stream_loop', '-1', '-i', musicPath,
     '-filter_complex',
-    `[0:a]volume=${voiceBoost}[avoice];[1:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q];[avoice][music_q]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`,
+    `[0:a]${voiceChain}[avoice];[1:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q];[avoice][music_q]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`,
     '-map', '0:v',
     '-map', '[a]',
     '-c:v', 'copy',
