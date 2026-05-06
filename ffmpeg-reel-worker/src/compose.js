@@ -1163,6 +1163,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // Toma el bg pattern del reel + la imagen del segundo segmento (suele ser
   // la mas representativa) + titulo XXL + gancho. Best-effort: si falla,
   // el reel se entrega igual sin cover.
+  logger?.info?.('phase 6: generando portada cover.png');
   const coverPath = path.join(sessionDir, 'cover.png');
   try {
     const coverGeminiIdx = spec.segments.length > 1 ? 1 : 0;
@@ -1175,7 +1176,11 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
     catch { logoPathForCover = originalLogo; }
     const titleText = spec.title_badge?.text || '';
     const hookText = (spec.segments[0]?.subtitle_text || '').trim();
-    if (coverGeminiPath && titleText) {
+    if (!coverGeminiPath) {
+      logger?.warn?.('cover skip: no hay imagen Gemini disponible para el segmento');
+    } else if (!titleText) {
+      logger?.warn?.('cover skip: spec sin title_badge.text');
+    } else {
       await generateCoverImage({
         outputPath: coverPath,
         bgPath: sessionBgPath,
