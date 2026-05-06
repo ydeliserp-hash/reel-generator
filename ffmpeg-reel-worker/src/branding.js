@@ -124,16 +124,11 @@ export const BRAND = {
       'marcapasos', 'desfibrilador', 'DAI', 'stent', 'bypass', 'ablación', 'ablacion',
 
       // ===== AMBIENTAL =====
-      'frío', 'frio', 'calor', 'temperatura',
-      'ola', 'contaminación', 'contaminacion', 'polución', 'polucion',
-      'sol', 'luz', 'exposición', 'exposicion',
-      'sauna', 'ducha',
+      'sol', 'solar', 'luz', 'exposición', 'exposicion',
 
-      // ===== OTROS (cafe, te, hidratacion) =====
-      'café', 'cafe', 'cafeína', 'cafeina',
-      'té', 'te', 'infusión', 'infusion',
+      // ===== OTROS =====
+      'cafeína', 'cafeina',
       'chocolate', 'cacao',
-      'agua', 'hidratación', 'hidratacion', 'deshidratación', 'deshidratacion',
     ],
   },
   signature: {
