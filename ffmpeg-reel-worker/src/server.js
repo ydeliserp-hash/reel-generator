@@ -46,6 +46,9 @@ const MAX_UPLOAD_MB = parseInt(process.env.MAX_UPLOAD_MB || '50', 10);
 const REQ_BODY_LIMIT = process.env.REQ_BODY_LIMIT || '50mb';
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const LOG_LEVEL = process.env.LOG_LEVEL || 'info';
+// URL del webhook de n8n al que el dashboard /upload reenvia el MP3.
+// Si no esta seteado, el dashboard muestra error al subir.
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || '';
 
 const logger = pino({ level: LOG_LEVEL });
 const startedAt = Date.now();
@@ -473,6 +476,239 @@ app.get('/output/:sessionId', async (req, res) => {
     cleanup();
   });
   stream.pipe(res);
+});
+
+/**
+ * GET /upload — dashboard web simple para subir MP3 con drag & drop sin
+ * tener que tocar curl. Reenvia el form al webhook de n8n internamente y
+ * streamea el MP4 final al navegador.
+ */
+app.get(['/', '/upload'], async (_req, res) => {
+  const html = `<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<title>Reel Generator — Dra. Ydelise</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(135deg,#0A1F3D,#1B4F8C);color:#fff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:rgba(255,255,255,0.06);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:32px;width:100%;max-width:560px;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+  h1{margin:0 0 4px;font-size:24px;font-weight:600}
+  .sub{color:#9ec3e8;font-size:14px;margin-bottom:24px}
+  .drop{border:2px dashed rgba(255,255,255,0.25);border-radius:12px;padding:32px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:16px}
+  .drop:hover,.drop.drag{border-color:#14B8A6;background:rgba(20,184,166,0.06)}
+  .drop p{margin:8px 0 0;color:#9ec3e8;font-size:14px}
+  .drop strong{color:#fff;font-size:16px}
+  .drop .file{color:#F1C40F;margin-top:8px;font-weight:600;display:none}
+  input[type=file]{display:none}
+  label.field{display:block;margin-bottom:12px}
+  label.field span{display:block;font-size:13px;color:#9ec3e8;margin-bottom:6px}
+  input[type=text]{width:100%;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 14px;color:#fff;font-size:15px;font-family:inherit}
+  input[type=text]:focus{outline:none;border-color:#14B8A6}
+  button{width:100%;background:#F1C40F;color:#0A1F3D;border:none;border-radius:8px;padding:14px;font-size:16px;font-weight:700;cursor:pointer;font-family:inherit;margin-top:8px;transition:all 0.2s}
+  button:hover:not(:disabled){background:#fff}
+  button:disabled{opacity:0.5;cursor:not-allowed}
+  .status{margin-top:20px;padding:16px;background:rgba(0,0,0,0.3);border-radius:8px;font-size:14px;display:none}
+  .status.show{display:block}
+  .status .timer{color:#F1C40F;font-weight:700;margin-bottom:6px}
+  .status .msg{color:#9ec3e8}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#14B8A6;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:8px;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .download{display:none;margin-top:20px}
+  .download a{display:block;background:#14B8A6;color:#fff;text-decoration:none;padding:14px;border-radius:8px;text-align:center;font-weight:600}
+  .download a:hover{background:#0e9488}
+  .err{color:#fca5a5;margin-top:12px;font-size:14px}
+</style>
+</head><body>
+<div class="card">
+  <h1>Reel Generator</h1>
+  <div class="sub">Sube tu audio y genera el reel automáticamente</div>
+
+  <form id="form">
+    <label class="drop" id="drop">
+      <strong>Arrastra tu MP3 aquí</strong>
+      <p>o haz click para seleccionar</p>
+      <div class="file" id="filename"></div>
+      <input type="file" id="audio" name="audio" accept="audio/mpeg,audio/mp3,audio/wav,audio/m4a" required>
+    </label>
+
+    <label class="field">
+      <span>Título del reel</span>
+      <input type="text" id="topic" name="topic" placeholder="Ej: Café y corazón" required>
+    </label>
+
+    <label class="field">
+      <span>Estilo (opcional)</span>
+      <input type="text" id="style" name="style" placeholder="educational" value="educational">
+    </label>
+
+    <button type="submit" id="submit">Generar reel</button>
+  </form>
+
+  <div class="status" id="status">
+    <div class="timer"><span class="spinner"></span><span id="elapsed">0:00</span></div>
+    <div class="msg" id="msg">Subiendo audio…</div>
+  </div>
+
+  <div class="download" id="download">
+    <a id="downloadLink" download="reel.mp4">⬇ Descargar reel</a>
+  </div>
+</div>
+
+<script>
+const drop = document.getElementById('drop');
+const audioIn = document.getElementById('audio');
+const filenameEl = document.getElementById('filename');
+const form = document.getElementById('form');
+const submitBtn = document.getElementById('submit');
+const status = document.getElementById('status');
+const elapsed = document.getElementById('elapsed');
+const msg = document.getElementById('msg');
+const downloadDiv = document.getElementById('download');
+const downloadLink = document.getElementById('downloadLink');
+
+['dragover','dragenter'].forEach(e=>drop.addEventListener(e,ev=>{ev.preventDefault();drop.classList.add('drag')}));
+['dragleave','drop'].forEach(e=>drop.addEventListener(e,()=>drop.classList.remove('drag')));
+drop.addEventListener('drop',ev=>{
+  ev.preventDefault();
+  if(ev.dataTransfer.files[0]){
+    audioIn.files=ev.dataTransfer.files;
+    showFilename();
+  }
+});
+audioIn.addEventListener('change', showFilename);
+function showFilename(){
+  if(audioIn.files[0]){
+    filenameEl.textContent='📎 '+audioIn.files[0].name;
+    filenameEl.style.display='block';
+    if(!document.getElementById('topic').value){
+      // sugerir topic a partir del filename
+      const name=audioIn.files[0].name.replace(/\\.[^.]+$/,'').replace(/[-_]/g,' ');
+      document.getElementById('topic').value=name.charAt(0).toUpperCase()+name.slice(1);
+    }
+  }
+}
+
+const stages=[
+  [0,'Subiendo audio…'],
+  [10,'Transcribiendo con Whisper…'],
+  [25,'Planificando imágenes con IA…'],
+  [40,'Generando imágenes con Gemini…'],
+  [120,'Componiendo segmentos…'],
+  [180,'Aplicando subtítulos y firma…'],
+  [220,'Mezclando música y outro…'],
+  [260,'Subiendo a Drive…'],
+];
+function updateStage(secs){
+  let stage=stages[0][1];
+  for(const [t,s] of stages) if(secs>=t) stage=s;
+  msg.textContent=stage;
+}
+function fmt(s){const m=Math.floor(s/60),x=s%60;return m+':'+String(x).padStart(2,'0')}
+
+form.addEventListener('submit', async ev=>{
+  ev.preventDefault();
+  if(!audioIn.files[0]){alert('Selecciona un MP3');return}
+  submitBtn.disabled=true;
+  submitBtn.textContent='Generando…';
+  status.classList.add('show');
+  downloadDiv.style.display='none';
+
+  const fd=new FormData();
+  fd.append('audio',audioIn.files[0]);
+  fd.append('topic',document.getElementById('topic').value);
+  fd.append('style',document.getElementById('style').value||'educational');
+
+  const t0=Date.now();
+  const tick=setInterval(()=>{
+    const secs=Math.floor((Date.now()-t0)/1000);
+    elapsed.textContent=fmt(secs);
+    updateStage(secs);
+  },500);
+
+  try{
+    const r=await fetch('/upload',{method:'POST',body:fd});
+    clearInterval(tick);
+    if(!r.ok){
+      const t=await r.text();
+      msg.innerHTML='<span class="err">Error: '+t.slice(0,200)+'</span>';
+      submitBtn.disabled=false;
+      submitBtn.textContent='Generar reel';
+      return;
+    }
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    downloadLink.href=url;
+    downloadLink.download='reel_'+Date.now()+'.mp4';
+    msg.textContent='✓ Reel listo en '+fmt(Math.floor((Date.now()-t0)/1000));
+    downloadDiv.style.display='block';
+    submitBtn.disabled=false;
+    submitBtn.textContent='Generar otro';
+  }catch(e){
+    clearInterval(tick);
+    msg.innerHTML='<span class="err">Error de red: '+e.message+'</span>';
+    submitBtn.disabled=false;
+    submitBtn.textContent='Generar reel';
+  }
+});
+</script>
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+/**
+ * POST /upload — proxy del dashboard al webhook de n8n.
+ * Recibe multipart con audio + topic + style, lo reenvia a N8N_WEBHOOK_URL,
+ * y streamea la respuesta (MP4 binario) al navegador.
+ */
+const dashboardUpload = upload.single('audio');
+app.post('/upload', dashboardUpload, async (req, res) => {
+  if (!N8N_WEBHOOK_URL) {
+    return res.status(503).json({ error: 'n8n_webhook_not_configured', message: 'Set N8N_WEBHOOK_URL env var' });
+  }
+  if (!req.file) {
+    return res.status(400).json({ error: 'no_audio_file' });
+  }
+  const topic = (req.body?.topic || '').toString();
+  const style = (req.body?.style || 'educational').toString();
+  const audioBuffer = req.file.buffer;
+  const audioName = req.file.originalname || 'audio.mp3';
+  const audioMime = req.file.mimetype || 'audio/mpeg';
+
+  try {
+    const form = new FormData();
+    form.append('audio', new Blob([audioBuffer], { type: audioMime }), audioName);
+    form.append('topic', topic);
+    form.append('style', style);
+
+    req.log.info({ topic, audioName, audioBytes: audioBuffer.length }, 'forwarding upload to n8n webhook');
+    const upstream = await fetch(N8N_WEBHOOK_URL, {
+      method: 'POST',
+      body: form,
+    });
+
+    if (!upstream.ok) {
+      const text = await upstream.text().catch(() => '');
+      req.log.warn({ status: upstream.status, body: text.slice(0, 500) }, 'n8n webhook returned error');
+      return res.status(upstream.status).type('text/plain').send(text.slice(0, 1000) || `n8n returned ${upstream.status}`);
+    }
+
+    // Streamea el MP4 binary al navegador
+    const ct = upstream.headers.get('content-type') || 'video/mp4';
+    const cd = upstream.headers.get('content-disposition');
+    res.setHeader('Content-Type', ct);
+    if (cd) res.setHeader('Content-Disposition', cd);
+    if (upstream.body) {
+      const { Readable } = await import('node:stream');
+      Readable.fromWeb(upstream.body).pipe(res);
+    } else {
+      const buf = Buffer.from(await upstream.arrayBuffer());
+      res.send(buf);
+    }
+  } catch (e) {
+    req.log.error({ err: e.message }, 'upload proxy failed');
+    res.status(502).type('text/plain').send('Error reenviando a n8n: ' + e.message);
+  }
 });
 
 /**
