@@ -751,9 +751,18 @@ async function generateCoverImage({
   //
   // Esto produce un sombreado suave/difuminado que rodea las letras, en lugar
   // del outline duro o shadowx/y rigido que ofrece drawtext nativo.
+  // Bordes difuminados de la imagen Gemini: usamos geq para escribir un canal
+  // alpha que se desvanece desde transparente (alpha=0) en el borde hasta
+  // opaco (alpha=255) tras `featherPx` pixels hacia adentro. Resultado: la
+  // imagen se funde suavemente con el fondo en lugar de tener bordes rectos.
+  // \\, escapa la coma dentro de la expresion (en filter_complex la coma
+  // separa filtros, asi que en expresiones dentro de un filtro hay que escaparla).
+  const featherPx = 50;
+  const geqAlpha = `clip(min(min(X\\,W-X)\\,min(Y\\,H-Y))*255/${featherPx}\\,0\\,255)`;
   const filterParts = [
     `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},format=yuv420p[bg]`,
-    `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba[gemini]`,
+    `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba,` +
+      `geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${geqAlpha}'[gemini]`,
     `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
     // Canvas transparente del mismo tamano que el cover (fuente: filter source)
     `color=color=black@0.0:size=${W}x${H}:duration=1:rate=1,format=yuva420p[blank]`,
