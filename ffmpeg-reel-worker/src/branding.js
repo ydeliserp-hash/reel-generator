@@ -211,7 +211,8 @@ export const BRAND = {
   background_music: {
     enabled: process.env.BACKGROUND_MUSIC_ENABLED !== 'false',
     music_dir: 'music',                  // dentro de assets/
-    volume: 0.15,                        // 0..1 (15% volumen, bajo para no tapar voz)
+    volume: 0.10,                        // 0..1 (10% volumen, bajado para no tapar voz)
+    voice_boost: 1.4,                    // multiplicador del volumen de la voz (1.0 = sin cambio)
     fade_in_duration: 1.0,               // segundos de fade-in al inicio
     fade_out_duration: 1.5,              // segundos de fade-out al final
   },
@@ -222,7 +223,7 @@ export const BRAND = {
     crf: 21,                       // Mejor calidad (antes 23)
     preset: 'fast',                // Compresion ~70% mejor que ultrafast
     audio_bitrate: '128k',
-    xfade_duration: 0.5,           // Transicion corta (era 1.5)
+    xfade_duration: 0.3,           // Transicion entre segmentos (mas corta = menos desfase imagen-audio)
     xfade_transition: 'fade',
     // Numero maximo de segmentos pre-procesados en paralelo en fase 1.
     // Bajar este valor si el worker se queda sin RAM o CPU.

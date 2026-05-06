@@ -593,7 +593,8 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
   // del outro y hace fade-out al final.
   const useMusic = !!musicPath;
   const m = BRAND.background_music || {};
-  const musicVol = m.volume ?? 0.15;
+  const musicVol = m.volume ?? 0.10;
+  const voiceBoost = m.voice_boost ?? 1.0;
   const fadeIn = m.fade_in_duration ?? 1.0;
   const fadeOut = m.fade_out_duration ?? 1.5;
   const fadeOutStart = Math.max(0, totalDuration - fadeOut);
@@ -605,11 +606,13 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
   if (useMusic) {
     // Input 2 = musica (con loop infinito por -stream_loop -1).
     // Aplicamos volumen, fade-in al inicio y fade-out al final del reel total.
-    // amix con duration=first hace que el audio final dure lo del [avoice]
-    // (que ya cubre voz + outro), no toda la musica looped.
+    // amix con normalize=0 NO baja el volumen de los inputs (sino que por
+    // defecto los normaliza dividiendo por N=2). Asi la voz se oye fuerte.
+    // Boost de voz adicional (voice_boost) para asegurarnos.
     filterParts.push(
+      `[avoice]volume=${voiceBoost}[avoice_amp]`,
       `[2:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q]`,
-      `[avoice][music_q]amix=inputs=2:duration=first:dropout_transition=0[a]`
+      `[avoice_amp][music_q]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`
     );
   }
   const filter = filterParts.join(';');
@@ -647,7 +650,8 @@ async function concatWithOutro(mainVideoPath, outroClipPath, outputPath, mainDur
  */
 async function applyMusicOnly(mainVideoPath, outputPath, mainDuration, musicPath, logger) {
   const m = BRAND.background_music || {};
-  const musicVol = m.volume ?? 0.15;
+  const musicVol = m.volume ?? 0.10;
+  const voiceBoost = m.voice_boost ?? 1.0;
   const fadeIn = m.fade_in_duration ?? 1.0;
   const fadeOut = m.fade_out_duration ?? 1.5;
   const fadeOutStart = Math.max(0, mainDuration - fadeOut);
@@ -656,7 +660,7 @@ async function applyMusicOnly(mainVideoPath, outputPath, mainDuration, musicPath
     '-i', mainVideoPath,
     '-stream_loop', '-1', '-i', musicPath,
     '-filter_complex',
-    `[1:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q];[0:a][music_q]amix=inputs=2:duration=first:dropout_transition=0[a]`,
+    `[0:a]volume=${voiceBoost}[avoice];[1:a]volume=${musicVol},afade=in:st=0:d=${fadeIn},afade=out:st=${fadeOutStart.toFixed(3)}:d=${fadeOut}[music_q];[avoice][music_q]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]`,
     '-map', '0:v',
     '-map', '[a]',
     '-c:v', 'copy',
