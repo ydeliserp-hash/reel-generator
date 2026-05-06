@@ -361,26 +361,22 @@ export async function ensureOutroClipsForAllPatterns(commonParams, patternsBaseD
 }
 
 /**
- * Pre-redimensiona el logo del outro a su tamano final (594 px de ancho).
- * Si el PNG original tiene un patron de cuadritos blancos+grises baked
- * (representacion visual de transparencia que se quedo pintada en el
- * archivo), aplicamos `colorkey` para hacerlos transparentes:
- *   - colorkey blanco con tolerancia media: elimina los cuadros blancos
- *   - colorkey gris claro con tolerancia menor: elimina los cuadros grises
- * Si el logo tiene blancos legitimos (texto blanco, etc) podrian volverse
- * transparentes — en tal caso, mejor re-exportar el PNG sin checkerboard.
+ * Pre-redimensiona el logo del outro a su tamano final (594 px de ancho)
+ * UNA SOLA VEZ al arrancar el worker. Asi FFmpeg no tiene que decodificar
+ * el PNG original (~2870x1472, ~5MB) ni reescalarlo cada frame del video.
+ * Si el redimensionado falla, devuelve null y compose.js usara el original.
  */
 export async function ensureResizedLogo(originalLogoPath, resizedLogoPath, targetWidth, logger) {
   try {
     await runFfmpeg([
       '-y',
       '-i', originalLogoPath,
-      '-vf', `scale=${targetWidth}:-1:flags=lanczos,format=rgba,colorkey=0xFFFFFF:0.18:0.05,colorkey=0xCCCCCC:0.15:0.05`,
+      '-vf', `scale=${targetWidth}:-1:flags=lanczos,format=rgba`,
       '-frames:v', '1',
       resizedLogoPath,
     ]);
     const s = await stat(resizedLogoPath);
-    logger?.info?.({ resizedLogoPath, bytes: s.size, targetWidth }, 'logo resized + checkerboard removed');
+    logger?.info?.({ resizedLogoPath, bytes: s.size, targetWidth }, 'logo resized for outro');
     return resizedLogoPath;
   } catch (e) {
     logger?.warn?.({ err: e.message }, 'logo resize failed, compose usara el PNG original');
