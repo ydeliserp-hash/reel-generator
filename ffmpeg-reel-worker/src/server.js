@@ -1399,7 +1399,9 @@ app.post('/compose-curated', curatedUpload, async (req, res) => {
   const spec = {
     segments: specSegments,
     duration: meta.segments[meta.segments.length - 1].end,
-    title_badge: { show: true, text: meta.topic, duration: 2.0 },
+    // Sin `duration` -> el title badge se queda visible durante todo el reel
+    // (mismo comportamiento que el modo automatico).
+    title_badge: { show: true, text: meta.topic },
     signature: '@draydeliserodriguez',
   };
 
