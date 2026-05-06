@@ -169,9 +169,11 @@ function buildDialogueLine(start, end, text, highlightCtx) {
  * Genera el contenido completo del fichero .ass.
  *
  * @param {Array<{start:number,end:number,subtitle_text:string}>} segments
+ * @param {number} [offsetSeconds=0] segundos a sumar a todos los timestamps
+ *   (util cuando el reel tiene padding de silencio al inicio)
  * @returns {string}
  */
-export function buildAssContent(segments) {
+export function buildAssContent(segments, offsetSeconds = 0) {
   const { width, height } = BRAND.video;
   const fontName = BRAND.fonts.subtitle;
   const fontSize = BRAND.subtitle.font_size;
@@ -237,7 +239,7 @@ export function buildAssContent(segments) {
       const portion = (chunks[i].length / totalChars) * segDuration;
       const chunkStart = cursor;
       const chunkEnd = isLast ? seg.end : cursor + portion;
-      events.push(buildDialogueLine(chunkStart, chunkEnd, chunks[i], highlightCtx));
+      events.push(buildDialogueLine(chunkStart + offsetSeconds, chunkEnd + offsetSeconds, chunks[i], highlightCtx));
       cursor = chunkEnd;
     }
   }
@@ -248,10 +250,11 @@ export function buildAssContent(segments) {
 /**
  * Genera y escribe el fichero .ass en disco.
  *
+ * @param {number} [offsetSeconds=0] segundos a sumar a todos los timestamps.
  * @returns {Promise<string>} ruta absoluta del fichero escrito.
  */
-export async function writeSubtitleFile(segments, outputPath) {
-  const content = buildAssContent(segments);
+export async function writeSubtitleFile(segments, outputPath, offsetSeconds = 0) {
+  const content = buildAssContent(segments, offsetSeconds);
   await writeFile(outputPath, content, 'utf8');
   return outputPath;
 }

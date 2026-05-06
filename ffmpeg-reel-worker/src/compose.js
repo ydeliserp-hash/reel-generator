@@ -463,6 +463,7 @@ async function applyOverlays(
     titleBadge,
     fontDir,
     outputPath,
+    introSilence = 0,        // segundos de silencio + freeze del primer frame al inicio
   },
   logger
 ) {
@@ -551,13 +552,27 @@ async function applyOverlays(
 
   const vf = filters.join(',');
 
+  // Si hay intro silence: tpad al video (freeze del primer frame N s) y
+  // adelay al audio (silencio durante esos N s al inicio). La voz empieza
+  // a tocar a t=N, pero el video tiene contenido (frame congelado) desde t=0.
+  let filterComplex;
+  let audioMap;
+  if (introSilence > 0) {
+    const ms = Math.round(introSilence * 1000);
+    filterComplex = `[0:v]${vf},tpad=start_duration=${introSilence}:start_mode=clone[v];[1:a]adelay=${ms}|${ms},apad=pad_dur=0.1[a]`;
+    audioMap = '[a]';
+  } else {
+    filterComplex = `[0:v]${vf}[v]`;
+    audioMap = '1:a';
+  }
+
   const args = [
     '-y',
     '-i', videoPath,
     '-i', audioPath,
-    '-filter_complex', `[0:v]${vf}[v]`,
+    '-filter_complex', filterComplex,
     '-map', '[v]',
-    '-map', '1:a',
+    '-map', audioMap,
     '-c:v', 'libx264',
     '-preset', BRAND.video.preset,
     '-crf', BRAND.video.crf.toString(),
@@ -854,9 +869,11 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   await runWithConcurrency(segmentTasks, maxParallel);
   logger?.info?.({ count: spec.segments.length }, 'phase 1 done');
 
-  // Paso 2: subtitulos .ass.
+  // Paso 2: subtitulos .ass. Si hay intro silence, los timestamps se
+  // shiftean +introSilence segundos para que coincidan con la voz delayed.
+  const introSilence = BRAND.video.intro_silence_duration ?? 0;
   const subtitlePath = path.join(sessionDir, 'subtitles.ass');
-  await writeSubtitleFile(spec.segments, subtitlePath);
+  await writeSubtitleFile(spec.segments, subtitlePath, introSilence);
 
   // Paso 3: concat con xfade.
   const concatPath = path.join(sessionDir, 'concat.mp4');
@@ -917,15 +934,19 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       titleBadge: spec.title_badge,
       fontDir,
       outputPath: mainVideoPath,
+      introSilence,
     },
     logger
   );
 
   // Paso 5: combinacion final (outro + musica + fade out).
   // Si el outro_clip esta corrupto, fallback a copy de main.
-  const mainDuration = audioDurationProbed && audioDurationProbed > 0
+  // mainDuration incluye el introSilence (el video y audio del main.mp4
+  // ya tienen los N segundos extra al inicio).
+  const audioDur = audioDurationProbed && audioDurationProbed > 0
     ? audioDurationProbed
     : audioDurations.reduce((acc, d) => acc + d, 0);
+  const mainDuration = audioDur + introSilence;
   if (useOutro) {
     try {
       await concatWithOutro(

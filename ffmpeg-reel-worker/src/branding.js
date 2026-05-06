@@ -200,6 +200,9 @@ export const BRAND = {
     height: 1350,                  // Formato 4:5 (Instagram feed portrait)
     fps: 30,
     crf: 21,                       // Mejor calidad (antes 23)
+    // Segundos de silencio + freeze del primer frame al inicio del reel.
+    // Util para dar tiempo a que aparezca el title badge antes que la voz.
+    intro_silence_duration: 2.0,
     preset: 'fast',                // Compresion ~70% mejor que ultrafast
     audio_bitrate: '128k',
     xfade_duration: 0.3,           // Transicion entre segmentos (mas corta = menos desfase imagen-audio)
