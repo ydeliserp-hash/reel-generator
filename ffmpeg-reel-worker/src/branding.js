@@ -103,15 +103,9 @@ export const BRAND = {
       'TSH', 'tiroides', 'tiroideo',
 
       // ===== WELLBEING =====
-      'estrés', 'estres', 'ansiedad', 'ansioso',
-      'sueño', 'sueno', 'dormir', 'insomnio',
-      'apnea', 'ronquido',
-      'descanso', 'fatiga', 'cansancio',
+      'estrés', 'estres',
       'meditación', 'meditacion', 'mindfulness', 'respiración', 'respiracion',
-      'bienestar', 'salud', 'mental',
-      'depresión', 'depresion', 'ánimo', 'animo',
-      'relajación', 'relajacion',
-      'soledad', 'conexión', 'conexion',
+      'depresión', 'depresion',
 
       // ===== MEDICACION =====
       'estatinas', 'estatina', 'ezetimiba', 'fibratos', 'PCSK9',
@@ -127,7 +121,6 @@ export const BRAND = {
       'holter', 'ergometría', 'ergometria', 'prueba',
       'cateterismo', 'coronariografía', 'coronariografia',
       'TAC', 'resonancia', 'RMN',
-      'analítica', 'analitica', 'perfil', 'lipídico', 'lipidico',
       'marcapasos', 'desfibrilador', 'DAI', 'stent', 'bypass', 'ablación', 'ablacion',
 
       // ===== AMBIENTAL =====
