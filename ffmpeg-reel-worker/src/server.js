@@ -33,6 +33,7 @@ import { spawn } from 'node:child_process';
 import { composeReel } from './compose.js';
 import { ensureGradientBackground, ensureResizedLogo, ensureOutroClipsForAllPatterns } from './utils/background.js';
 import { BRAND, pctY } from './branding.js';
+import { smartSegment } from './segmentation.js';
 
 // ---------------------------------------------------------------------------
 // Configuracion via entorno
@@ -516,6 +517,277 @@ app.get('/output/:sessionId', async (req, res) => {
 });
 
 /**
+ * GET /curated — dashboard del flujo CURADO (modo remix con asignacion
+ * manual de imagenes por segmento). Flujo de 2 pasos:
+ *   Paso 1: subes MP3 + topic, /analyze devuelve segmentos
+ *   Paso 2: la UI muestra los segmentos como cards con su propia dropzone
+ *           cada una. Arrastras imagenes a cada slot, /compose-curated
+ *           genera el reel.
+ */
+app.get('/curated', async (_req, res) => {
+  const html = `<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8">
+<title>Reel Generator — Curado</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(135deg,#0A1F3D,#1B4F8C);color:#fff;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;min-height:100vh;padding:24px}
+  .wrap{max-width:780px;margin:0 auto}
+  .card{background:rgba(255,255,255,0.06);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.1);border-radius:16px;padding:24px;margin-bottom:16px;box-shadow:0 8px 32px rgba(0,0,0,0.4)}
+  h1{margin:0 0 4px;font-size:24px;font-weight:600}
+  .sub{color:#9ec3e8;font-size:14px;margin-bottom:20px}
+  .step-tag{display:inline-block;background:#F1C40F;color:#0A1F3D;padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700;margin-right:8px}
+  .drop{border:2px dashed rgba(255,255,255,0.25);border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;margin-bottom:14px}
+  .drop:hover,.drop.drag{border-color:#14B8A6;background:rgba(20,184,166,0.06)}
+  .drop p{margin:6px 0 0;color:#9ec3e8;font-size:13px}
+  .drop strong{color:#fff;font-size:15px}
+  .drop .file{color:#F1C40F;margin-top:6px;font-weight:600;display:none;font-size:13px}
+  input[type=file]{display:none}
+  label.field{display:block;margin-bottom:12px}
+  label.field span{display:block;font-size:13px;color:#9ec3e8;margin-bottom:6px}
+  input[type=text]{width:100%;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:10px 14px;color:#fff;font-size:15px;font-family:inherit}
+  input[type=text]:focus{outline:none;border-color:#14B8A6}
+  button{background:#F1C40F;color:#0A1F3D;border:none;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:all 0.2s}
+  button:hover:not(:disabled){background:#fff}
+  button:disabled{opacity:0.5;cursor:not-allowed}
+  button.full{width:100%}
+  .err{color:#fca5a5;margin-top:12px;font-size:14px}
+  .seg{background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:14px;margin-bottom:12px}
+  .seg-h{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px}
+  .seg-num{color:#F1C40F;font-weight:700;font-size:13px;background:rgba(241,196,15,0.12);padding:4px 8px;border-radius:5px;flex-shrink:0}
+  .seg-text{flex:1;color:#fff;font-size:14px;line-height:1.4}
+  .seg-dur{color:#9ec3e8;font-size:11px;margin-left:8px;flex-shrink:0}
+  .seg-drop{border:2px dashed rgba(241,196,15,0.3);border-radius:8px;padding:14px;text-align:center;cursor:pointer;transition:all 0.2s;font-size:13px}
+  .seg-drop:hover,.seg-drop.drag{border-color:#F1C40F;background:rgba(241,196,15,0.06)}
+  .seg-drop strong{color:#F1C40F}
+  .seg-thumbs{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .seg-thumb{position:relative;width:60px;height:60px;border-radius:6px;overflow:hidden;background:#000}
+  .seg-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .seg-thumb .x{position:absolute;top:2px;right:2px;background:rgba(220,38,38,0.85);color:#fff;width:18px;height:18px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;cursor:pointer;line-height:1}
+  .status{padding:14px;background:rgba(0,0,0,0.3);border-radius:8px;font-size:14px;margin-top:12px;display:none}
+  .status.show{display:block}
+  .status .timer{color:#F1C40F;font-weight:700;margin-bottom:4px}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#14B8A6;border-radius:50%;animation:spin 0.8s linear infinite;margin-right:6px;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .download{margin-top:14px;display:none}
+  .download a{display:block;background:#14B8A6;color:#fff;text-decoration:none;padding:12px;border-radius:8px;text-align:center;font-weight:600}
+  .nav{margin-bottom:16px;font-size:13px}
+  .nav a{color:#9ec3e8;text-decoration:none}
+  .nav a:hover{color:#fff}
+  .hidden{display:none}
+</style>
+</head><body>
+<div class="wrap">
+  <div class="nav"><a href="/upload">← Volver al modo automatico</a></div>
+
+  <div class="card" id="step1">
+    <h1><span class="step-tag">PASO 1</span>Sube el audio</h1>
+    <div class="sub">Whisper transcribira el audio y dividira en segmentos. Despues asignaras imagenes a cada uno.</div>
+    <label class="drop" id="dropAudio">
+      <strong>Arrastra tu MP3</strong>
+      <p>o click para seleccionar</p>
+      <div class="file" id="audioName"></div>
+      <input type="file" id="audio" accept="audio/mpeg,audio/mp3,audio/wav,audio/m4a">
+    </label>
+    <label class="field">
+      <span>Titulo del reel</span>
+      <input type="text" id="topic" placeholder="Ej: Cafe y corazon">
+    </label>
+    <button id="btnAnalyze" class="full">Analizar audio</button>
+    <div class="status" id="status1"><div class="timer"><span class="spinner"></span><span id="elapsed1">0:00</span></div><div id="msg1">Subiendo...</div></div>
+  </div>
+
+  <div id="step2" class="hidden">
+    <div class="card">
+      <h1><span class="step-tag">PASO 2</span>Asigna imagenes a cada segmento</h1>
+      <div class="sub" id="step2Sub">Arrastra ≥1 imagen a cada segmento. Puedes meter 2-3 en los largos para que cambien durante la frase.</div>
+    </div>
+    <div id="segments"></div>
+    <div class="card">
+      <button id="btnGenerate" class="full">Generar reel</button>
+      <div class="status" id="status2"><div class="timer"><span class="spinner"></span><span id="elapsed2">0:00</span></div><div id="msg2">Componiendo...</div></div>
+      <div class="download" id="download"><a id="downloadLink" download="reel.mp4">⬇ Descargar reel</a></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const dropAudio=document.getElementById('dropAudio'),audioIn=document.getElementById('audio'),audioName=document.getElementById('audioName');
+const topicEl=document.getElementById('topic'),btnAnalyze=document.getElementById('btnAnalyze');
+const status1=document.getElementById('status1'),elapsed1=document.getElementById('elapsed1'),msg1=document.getElementById('msg1');
+const step1=document.getElementById('step1'),step2=document.getElementById('step2'),segmentsEl=document.getElementById('segments'),step2Sub=document.getElementById('step2Sub');
+const btnGenerate=document.getElementById('btnGenerate');
+const status2=document.getElementById('status2'),elapsed2=document.getElementById('elapsed2'),msg2=document.getElementById('msg2'),downloadDiv=document.getElementById('download'),downloadLink=document.getElementById('downloadLink');
+
+let sessionId=null;
+let segmentImages={}; // segIdx -> [{file, name, dataUrl}]
+
+function fmt(s){const m=Math.floor(s/60),x=s%60;return m+':'+String(x).padStart(2,'0')}
+
+// Drop audio
+['dragover','dragenter'].forEach(e=>dropAudio.addEventListener(e,ev=>{ev.preventDefault();dropAudio.classList.add('drag')}));
+['dragleave','drop'].forEach(e=>dropAudio.addEventListener(e,()=>dropAudio.classList.remove('drag')));
+dropAudio.addEventListener('drop',ev=>{ev.preventDefault();if(ev.dataTransfer.files[0]){audioIn.files=ev.dataTransfer.files;showAudioName()}});
+audioIn.addEventListener('change',showAudioName);
+function showAudioName(){
+  if(audioIn.files[0]){
+    audioName.textContent='📎 '+audioIn.files[0].name;
+    audioName.style.display='block';
+    if(!topicEl.value){
+      const n=audioIn.files[0].name.replace(/\\.[^.]+$/,'').replace(/[-_]/g,' ');
+      topicEl.value=n.charAt(0).toUpperCase()+n.slice(1);
+    }
+  }
+}
+
+// Paso 1: analizar audio
+btnAnalyze.addEventListener('click',async()=>{
+  if(!audioIn.files[0]){alert('Selecciona un MP3');return}
+  if(!topicEl.value.trim()){alert('Escribe un titulo');return}
+  btnAnalyze.disabled=true;btnAnalyze.textContent='Analizando...';
+  status1.classList.add('show');msg1.textContent='Subiendo audio...';
+  const t0=Date.now();
+  const tick=setInterval(()=>{
+    const s=Math.floor((Date.now()-t0)/1000);elapsed1.textContent=fmt(s);
+    if(s>3)msg1.textContent='Whisper transcribiendo...';
+    if(s>20)msg1.textContent='Segmentando ideas...';
+  },500);
+  try{
+    const fd=new FormData();
+    fd.append('audio',audioIn.files[0]);
+    fd.append('topic',topicEl.value);
+    const r=await fetch('/analyze',{method:'POST',body:fd});
+    clearInterval(tick);
+    if(!r.ok){const t=await r.text();msg1.innerHTML='<span class="err">Error: '+t.slice(0,300)+'</span>';btnAnalyze.disabled=false;btnAnalyze.textContent='Analizar audio';return}
+    const data=await r.json();
+    sessionId=data.session_id;
+    renderSegments(data.segments,data.total_duration);
+    step1.classList.add('hidden');
+    step2.classList.remove('hidden');
+  }catch(e){
+    clearInterval(tick);
+    msg1.innerHTML='<span class="err">Error: '+e.message+'</span>';
+    btnAnalyze.disabled=false;btnAnalyze.textContent='Analizar audio';
+  }
+});
+
+function renderSegments(segments,totalDur){
+  step2Sub.textContent='Detecte '+segments.length+' segmentos en '+totalDur.toFixed(1)+'s. Arrastra ≥1 imagen a cada uno (puedes meter 2-3 en los largos).';
+  segmentsEl.innerHTML='';
+  segments.forEach(seg=>{
+    segmentImages[seg.idx]=[];
+    const card=document.createElement('div');
+    card.className='seg';
+    card.innerHTML=
+      '<div class="seg-h"><div class="seg-num">SEG '+seg.idx+'</div>'+
+      '<div class="seg-text">'+seg.text.replace(/</g,'&lt;')+'</div>'+
+      '<div class="seg-dur">'+seg.duration+'s</div></div>'+
+      '<label class="seg-drop" data-seg="'+seg.idx+'">'+
+      '<strong>Arrastra imagen(es)</strong>'+
+      '<p>o click para añadir. Acepta varias.</p>'+
+      '<input type="file" accept="image/png,image/jpeg,image/jpg,image/webp" multiple data-seg="'+seg.idx+'" style="display:none">'+
+      '</label>'+
+      '<div class="seg-thumbs" data-seg="'+seg.idx+'"></div>';
+    segmentsEl.appendChild(card);
+  });
+  // Bind drop+click handlers
+  segmentsEl.querySelectorAll('.seg-drop').forEach(zone=>{
+    const segIdx=parseInt(zone.dataset.seg);
+    const fileInput=zone.querySelector('input[type=file]');
+    ['dragover','dragenter'].forEach(e=>zone.addEventListener(e,ev=>{ev.preventDefault();zone.classList.add('drag')}));
+    ['dragleave','drop'].forEach(e=>zone.addEventListener(e,()=>zone.classList.remove('drag')));
+    zone.addEventListener('drop',ev=>{
+      ev.preventDefault();
+      const files=Array.from(ev.dataTransfer.files).filter(f=>/^image\\//.test(f.type));
+      addImages(segIdx,files);
+    });
+    fileInput.addEventListener('change',ev=>{
+      addImages(segIdx,Array.from(fileInput.files));
+      fileInput.value='';
+    });
+  });
+}
+
+function addImages(segIdx,files){
+  files.forEach(f=>{
+    const reader=new FileReader();
+    reader.onload=e=>{
+      segmentImages[segIdx].push({file:f,name:f.name,dataUrl:e.target.result});
+      renderThumbs(segIdx);
+    };
+    reader.readAsDataURL(f);
+  });
+}
+
+function renderThumbs(segIdx){
+  const cont=segmentsEl.querySelector('.seg-thumbs[data-seg="'+segIdx+'"]');
+  cont.innerHTML='';
+  segmentImages[segIdx].forEach((img,k)=>{
+    const t=document.createElement('div');
+    t.className='seg-thumb';
+    t.innerHTML='<img src="'+img.dataUrl+'"><div class="x" data-seg="'+segIdx+'" data-k="'+k+'">×</div>';
+    cont.appendChild(t);
+  });
+  cont.querySelectorAll('.x').forEach(x=>{
+    x.addEventListener('click',ev=>{
+      const s=parseInt(ev.target.dataset.seg);
+      const k=parseInt(ev.target.dataset.k);
+      segmentImages[s].splice(k,1);
+      renderThumbs(s);
+    });
+  });
+}
+
+// Paso 2: generar reel
+btnGenerate.addEventListener('click',async()=>{
+  // Validar: cada segmento debe tener ≥1 imagen
+  const missing=[];
+  for(const k of Object.keys(segmentImages)){
+    if(segmentImages[k].length===0)missing.push(k);
+  }
+  if(missing.length>0){alert('Faltan imagenes en los segmentos: '+missing.join(', '));return}
+  btnGenerate.disabled=true;btnGenerate.textContent='Generando...';
+  status2.classList.add('show');downloadDiv.style.display='none';
+  const t0=Date.now();
+  const stages=[[0,'Subiendo imagenes...'],[10,'Componiendo segmentos...'],[60,'Aplicando subtitulos...'],[120,'Mezclando musica y outro...']];
+  const tick=setInterval(()=>{
+    const s=Math.floor((Date.now()-t0)/1000);elapsed2.textContent=fmt(s);
+    let st=stages[0][1];for(const[t,m]of stages)if(s>=t)st=m;msg2.textContent=st;
+  },500);
+  try{
+    const fd=new FormData();
+    fd.append('session_id',sessionId);
+    for(const segIdx of Object.keys(segmentImages)){
+      segmentImages[segIdx].forEach((img,k)=>{
+        fd.append('image_'+segIdx+'_'+k,img.file,img.name);
+      });
+    }
+    const r=await fetch('/compose-curated',{method:'POST',body:fd});
+    clearInterval(tick);
+    if(!r.ok){const t=await r.text();msg2.innerHTML='<span class="err">Error: '+t.slice(0,400)+'</span>';btnGenerate.disabled=false;btnGenerate.textContent='Generar reel';return}
+    const data=await r.json();
+    // Descargar el MP4 con el output_url devuelto
+    msg2.textContent='Descargando MP4...';
+    const dl=await fetch(data.output_url);
+    const blob=await dl.blob();
+    const url=URL.createObjectURL(blob);
+    downloadLink.href=url;downloadLink.download='reel_'+Date.now()+'.mp4';
+    msg2.textContent='✓ Reel listo en '+fmt(Math.floor((Date.now()-t0)/1000));
+    downloadDiv.style.display='block';
+    btnGenerate.disabled=false;btnGenerate.textContent='Generar otro';
+  }catch(e){
+    clearInterval(tick);
+    msg2.innerHTML='<span class="err">Error: '+e.message+'</span>';
+    btnGenerate.disabled=false;btnGenerate.textContent='Generar reel';
+  }
+});
+</script>
+</body></html>`;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(html);
+});
+
+/**
  * GET /upload — dashboard web simple para subir MP3 con drag & drop sin
  * tener que tocar curl. Reenvia el form al webhook de n8n internamente y
  * streamea el MP4 final al navegador.
@@ -558,7 +830,7 @@ app.get(['/', '/upload'], async (_req, res) => {
 </head><body>
 <div class="card">
   <h1>Reel Generator</h1>
-  <div class="sub">Sube tu audio y genera el reel automáticamente</div>
+  <div class="sub">Sube tu audio y genera el reel automáticamente · <a href="/curated" style="color:#F1C40F;text-decoration:none">→ Modo curado (asignar imágenes por segmento)</a></div>
 
   <form id="form">
     <label class="drop" id="drop">
@@ -954,6 +1226,215 @@ app.get('/patterns/:idx.png', async (req, res) => {
   res.setHeader('Content-Length', String(stat.size));
   res.setHeader('Cache-Control', 'public, max-age=3600');
   createReadStream(patternPath).pipe(res);
+});
+
+// ---------------------------------------------------------------------------
+// FLUJO CURADO (modo remix con asignacion manual por segmento)
+//
+// Diseñado para cuando el reel auto no convence Y la doctora quiere control
+// fino sobre que imagen va en que segmento. Es un flujo de 2 pasos en el
+// MISMO worker (sin pasar por n8n), guardando estado en el sessionDir entre
+// pasos:
+//
+//   POST /analyze            -> sube MP3 + topic, corre Whisper + segmentacion,
+//                                guarda audio+segments en disco, devuelve
+//                                session_id + segments[]
+//   POST /compose-curated    -> sube imagenes etiquetadas image_<seg>_<k>,
+//                                construye spec con assets[] por segmento,
+//                                compone el reel, devuelve output_url
+//
+// Ambos endpoints reutilizan la misma sessionDir naming. La sesion expira
+// con el cleanup global tras descargar el output.
+// ---------------------------------------------------------------------------
+
+const analyzeUpload = upload.single('audio');
+app.post('/analyze', analyzeUpload, async (req, res) => {
+  if (!GROQ_API_KEY) {
+    return res.status(500).json({ error: 'groq_api_key_missing' });
+  }
+  if (!req.file) {
+    return res.status(400).json({ error: 'no_audio_file' });
+  }
+  // El multer global ya creo sessionDir + guardo audio.<ext> ahi
+  const sessionId = req._sessionId;
+  const sessionDir = req._sessionDir;
+  const topic = (req.body?.topic || '').toString();
+  const audioPath = req.file.path;
+  const audioName = req.file.originalname || 'audio.mp3';
+  let mimeType = req.file.mimetype || 'audio/mpeg';
+  if (mimeType === 'application/octet-stream') mimeType = 'audio/mpeg';
+
+  try {
+    const fs = await import('node:fs/promises');
+    const audioBuffer = await fs.readFile(audioPath);
+
+    // Llamar a Groq Whisper (mismo patron que /transcribe)
+    const form = new FormData();
+    form.append('file', new Blob([audioBuffer], { type: mimeType }), audioName);
+    form.append('model', 'whisper-large-v3-turbo');
+    form.append('response_format', 'verbose_json');
+    form.append('language', 'es');
+    form.append('timestamp_granularities[]', 'segment');
+    form.append('timestamp_granularities[]', 'word');
+
+    const groqRes = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${GROQ_API_KEY}` },
+      body: form,
+    });
+    if (!groqRes.ok) {
+      const text = await groqRes.text();
+      req.log.warn({ status: groqRes.status, body: text.slice(0, 500) }, 'groq error in /analyze');
+      return res.status(502).json({ error: 'groq_error', status: groqRes.status, body: text.slice(0, 1000) });
+    }
+    const transcript = await groqRes.json();
+
+    // Aplicar smartSegment (misma logica que el nodo n8n)
+    const segments = smartSegment(transcript);
+    if (segments.length === 0) {
+      return res.status(422).json({ error: 'no_segments', message: 'Whisper no produjo palabras o segmentos utiles' });
+    }
+
+    // Guardar metadatos en sessionDir para usar en /compose-curated
+    const meta = {
+      session_id: sessionId,
+      topic,
+      audio_filename: audioName,
+      audio_mime: mimeType,
+      audio_path: audioPath,
+      segments,
+      created_at: Date.now(),
+    };
+    await fs.writeFile(path.join(sessionDir, 'analyze_meta.json'), JSON.stringify(meta, null, 2), 'utf8');
+
+    res.json({
+      session_id: sessionId,
+      topic,
+      segments: segments.map((s, i) => ({
+        idx: i,
+        start: s.start,
+        end: s.end,
+        duration: +(s.end - s.start).toFixed(2),
+        text: s.text,
+      })),
+      total_duration: segments[segments.length - 1].end,
+    });
+  } catch (e) {
+    req.log.error({ err: e.message }, '/analyze failed');
+    await cleanupSession(sessionDir, req.log);
+    res.status(500).json({ error: 'analyze_failed', message: e.message });
+  }
+});
+
+// /compose-curated: recibe session_id + image_<seg>_<k> files, construye
+// spec con assets[] y delega a composeReel (mismo backend que /compose).
+const curatedUpload = upload.any();
+app.post('/compose-curated', curatedUpload, async (req, res) => {
+  const sessionId = (req.body?.session_id || '').toString();
+  if (!sessionId) {
+    return res.status(400).json({ error: 'missing_session_id' });
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'invalid_session_id' });
+  }
+  const sessionDir = path.join(SESSIONS_ROOT, sessionId);
+  let meta;
+  try {
+    const fs = await import('node:fs/promises');
+    const metaRaw = await fs.readFile(path.join(sessionDir, 'analyze_meta.json'), 'utf8');
+    meta = JSON.parse(metaRaw);
+  } catch {
+    return res.status(404).json({ error: 'session_not_found_or_expired', session_id: sessionId });
+  }
+
+  // Agrupar archivos subidos por segmento. Field name: image_<seg>_<k>
+  // Tambien aceptamos multer files que vinieron por otros campos (los ignoramos)
+  const filesBySegment = {};
+  for (const f of req.files || []) {
+    const m = f.fieldname.match(/^image_(\d+)_(\d+)$/);
+    if (!m) continue;
+    const segIdx = parseInt(m[1], 10);
+    const assetIdx = parseInt(m[2], 10);
+    if (!filesBySegment[segIdx]) filesBySegment[segIdx] = {};
+    filesBySegment[segIdx][assetIdx] = f.path;
+  }
+
+  // Validar: cada segmento debe tener al menos una imagen
+  const segCount = meta.segments.length;
+  const missing = [];
+  for (let i = 0; i < segCount; i++) {
+    if (!filesBySegment[i] || Object.keys(filesBySegment[i]).length === 0) missing.push(i);
+  }
+  if (missing.length > 0) {
+    return res.status(400).json({
+      error: 'segments_without_images',
+      message: `Faltan imagenes para los segmentos: ${missing.join(', ')}`,
+      missing,
+    });
+  }
+
+  // Construir spec con assets[] por segmento
+  const specSegments = meta.segments.map((seg, segIdx) => {
+    const segFiles = filesBySegment[segIdx];
+    const assetIndices = Object.keys(segFiles).map(Number).sort((a, b) => a - b);
+    const assets = assetIndices.map(() => ({ type: 'image' }));
+    return {
+      start: seg.start,
+      end: seg.end,
+      subtitle_text: seg.text || '',
+      assets,
+    };
+  });
+
+  // assetFilePaths con keys "N_K" para que composeReel los resuelva
+  const assetFilePaths = {};
+  for (const segIdx of Object.keys(filesBySegment)) {
+    const segFiles = filesBySegment[segIdx];
+    const sortedAssetIndices = Object.keys(segFiles).map(Number).sort((a, b) => a - b);
+    sortedAssetIndices.forEach((origK, normalizedK) => {
+      assetFilePaths[`${segIdx}_${normalizedK}`] = segFiles[origK];
+    });
+  }
+
+  const spec = {
+    segments: specSegments,
+    duration: meta.segments[meta.segments.length - 1].end,
+    title_badge: { show: true, text: meta.topic, duration: 2.0 },
+    signature: '@draydeliserodriguez',
+  };
+
+  let result;
+  try {
+    result = await composeReel({
+      spec,
+      sessionDir,
+      fontDir: FONT_DIR,
+      logger: req.log,
+      audioFilePath: meta.audio_path,
+      assetFilePaths,
+    });
+  } catch (e) {
+    req.log.error({ err: e.message, stack: e.stack }, '/compose-curated failed');
+    return res.status(500).json({ error: 'compose_failed', message: e.message, session_id: sessionId });
+  }
+
+  try {
+    const fs = await import('node:fs/promises');
+    const stat = await fs.stat(result.outputPath);
+    res.setHeader('X-Session-Id', sessionId);
+    res.setHeader('X-Compose-Elapsed-Ms', String(result.metadata.elapsed_ms));
+    res.json({
+      success: true,
+      session_id: sessionId,
+      filename: `reel-${sessionId}.mp4`,
+      size_bytes: stat.size,
+      output_url: `/output/${sessionId}`,
+      metadata: result.metadata,
+    });
+  } catch (err) {
+    req.log.error({ err: err.message }, 'failed to stat curated mp4');
+    res.status(500).json({ error: 'mp4_stat_failed', message: err.message });
+  }
 });
 
 // 404 catch-all
