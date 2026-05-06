@@ -677,7 +677,7 @@ async function generateCoverImage({
     return [words.slice(0, bestSplit).join(' '), words.slice(bestSplit).join(' ')];
   }
   const charWidthFactor = 0.58;
-  const baseTitleSize = 80;
+  const baseTitleSize = 100;            // letra mas grande del titulo
   const maxTitleW = W - 80; // margen 40 a cada lado
   let titleLines;
   let titleSize = baseTitleSize;
@@ -690,11 +690,11 @@ async function generateCoverImage({
       if (longest * baseTitleSize * charWidthFactor <= maxTitleW) {
         titleLines = split;
       } else {
-        titleSize = Math.max(48, Math.floor(maxTitleW / (longest * charWidthFactor)));
+        titleSize = Math.max(56, Math.floor(maxTitleW / (longest * charWidthFactor)));
         titleLines = split;
       }
     } else {
-      titleSize = Math.max(48, Math.floor(maxTitleW / (titleText.length * charWidthFactor)));
+      titleSize = Math.max(56, Math.floor(maxTitleW / (titleText.length * charWidthFactor)));
       titleLines = [titleText];
     }
   }
@@ -713,9 +713,12 @@ async function generateCoverImage({
     `[2:v]scale=130:-1,format=rgba[smallLogo]`,
     `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
   ];
-  // Titulo (1 o 2 lineas)
-  const titleStartY = 880;
+  // Titulo (1 o 2 lineas) — sin gancho debajo, solo titulo grande centrado
   const titleLineHeight = Math.round(titleSize * 1.15);
+  // Centrar verticalmente el bloque de titulo en el espacio entre la imagen
+  // (acaba en y=820) y la firma (en y=H-100=1250). Espacio: 820-1250.
+  const titleBlockH = titleSize + (titleLines.length - 1) * titleLineHeight;
+  const titleStartY = 870 + Math.round((380 - titleBlockH) / 2);
   let lastV = 'withImg';
   for (let i = 0; i < titleLines.length; i++) {
     const lineY = titleStartY + i * titleLineHeight;
@@ -725,21 +728,9 @@ async function generateCoverImage({
     );
     lastV = outLabel;
   }
-  // Gancho (debajo del titulo)
-  const hookY = titleStartY + titleLines.length * titleLineHeight + 30;
-  if (hookText) {
-    filterParts.push(
-      `[${lastV}]drawtext=fontfile='${escapeArg(sigFontFile)}':text='${escapeArg(hookText)}':fontsize=38:fontcolor=${whiteHex}:x=(w-text_w)/2:y=${hookY}:expansion=none[withHook]`
-    );
-    lastV = 'withHook';
-  }
-  // Firma esquina inferior izquierda
+  // Firma centrada al pie (sin gancho ni logo, diseno limpio)
   filterParts.push(
-    `[${lastV}]drawtext=fontfile='${escapeArg(sigFontFile)}':text='${escapeArg('@' + (BRAND.signature.text || '').replace(/^@/, ''))}':fontsize=28:fontcolor=${goldHex}:x=40:y=H-text_h-40:expansion=none[withSig]`
-  );
-  // Logo esquina inferior derecha
-  filterParts.push(
-    `[withSig][smallLogo]overlay=x=W-w-40:y=H-h-30[out]`
+    `[${lastV}]drawtext=fontfile='${escapeArg(sigFontFile)}':text='${escapeArg('@' + (BRAND.signature.text || '').replace(/^@/, ''))}':fontsize=32:fontcolor=${goldHex}:x=(w-text_w)/2:y=H-text_h-50:expansion=none[out]`
   );
 
   const filter = filterParts.join(';');
