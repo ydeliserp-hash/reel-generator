@@ -51,26 +51,119 @@ export const BRAND = {
     // (dorado) por default, modificable.
     highlight_color: '#F1C40F',          // dorado de marca
     highlight_keywords: [
-      // Cardiovascular
-      'corazon', 'corazón', 'cardiaco', 'cardíaco', 'cardiovascular', 'cardiologo', 'cardiólogo',
-      'arritmia', 'arritmias', 'fibrilacion', 'fibrilación', 'taquicardia', 'bradicardia',
-      'hipertension', 'hipertensión', 'tension', 'tensión', 'presion', 'presión',
-      'colesterol', 'trigliceridos', 'triglicéridos', 'LDL', 'HDL',
-      'infarto', 'ictus', 'ACV', 'angina', 'isquemia',
-      'estatinas', 'anticoagulantes',
-      // Riesgo / habitos
-      'prevencion', 'prevención', 'riesgo', 'mortalidad', 'salud',
-      'alcohol', 'tabaco', 'fumar', 'vapeo', 'vapear', 'cigarrillo',
-      'ejercicio', 'sedentarismo', 'actividad',
-      'dieta', 'nutricion', 'nutrición', 'mediterranea', 'mediterránea',
-      // Bioquimicos / suplementos
-      'omega', 'vitamina', 'magnesio', 'potasio',
-      'glucosa', 'insulina', 'diabetes', 'obesidad', 'sobrepeso',
-      'inflamacion', 'inflamación', 'antioxidantes', 'polifenoles',
-      // Wellbeing
-      'estres', 'estrés', 'sueño', 'descanso', 'meditacion', 'meditación',
-      // Cafe (tema reciente)
-      'cafe', 'café', 'cafeina', 'cafeína',
+      // ===== CARDIOVASCULAR =====
+      // Anatomia / terminos generales
+      'corazón', 'corazon', 'cardíaco', 'cardiaco', 'cardíaca', 'cardiaca',
+      'cardiovascular', 'cardiopatía', 'cardiopatia', 'cardiología', 'cardiologia',
+      'miocardio', 'miocárdico', 'endotelio', 'endotelial', 'vascular',
+      'arteria', 'arterial', 'vena', 'venoso', 'capilar', 'aorta',
+      'válvula', 'valvular', 'pericardio',
+      // Arritmias y conduccion
+      'arritmia', 'arritmias', 'fibrilación', 'fibrilacion',
+      'taquicardia', 'bradicardia', 'palpitaciones', 'extrasístoles', 'extrasistoles',
+      'flutter',
+      // HTA / presion
+      'hipertensión', 'hipertension', 'hipertenso', 'presión', 'presion',
+      'tensión', 'tension', 'hipotensión', 'hipotension',
+      // Eventos agudos
+      'infarto', 'IAM', 'síndrome', 'sindrome', 'coronario',
+      'ictus', 'ACV', 'trombosis', 'embolia', 'tromboembolismo', 'TEP',
+      'angina', 'angor', 'isquemia', 'isquémico', 'isquemico', 'aneurisma',
+      // Lipidos
+      'colesterol', 'LDL', 'HDL', 'ApoB', 'lipoproteína', 'lipoproteina', 'Lp(a)',
+      'dislipemia', 'dislipidemia', 'triglicéridos', 'trigliceridos',
+      'aterosclerosis', 'ateroma', 'placa', 'calcio',
+      // IC / valvulopatias
+      'insuficiencia', 'estenosis', 'soplo', 'disnea', 'edema',
+      'miocardiopatía', 'miocardiopatia', 'pericarditis', 'miocarditis', 'endocarditis',
+      // Sintomas / signos
+      'frecuencia', 'pulso',
+
+      // ===== RIESGO / HABITOS =====
+      'prevención', 'prevencion', 'primaria', 'secundaria',
+      'riesgo', 'factor', 'SCORE',
+      'alcohol', 'etanol',
+      'tabaco', 'fumar', 'fumador', 'nicotina', 'cigarrillo',
+      'vapeo', 'vapear', 'vaper', 'e-cigarrillo',
+      'ejercicio', 'actividad', 'sedentarismo', 'sedentario',
+      'HIIT', 'MICT', 'aeróbico', 'aerobico', 'anaeróbico', 'anaerobico',
+      'fuerza', 'resistencia', 'pasos', 'caminar',
+      'dieta', 'alimentación', 'alimentacion', 'nutrición', 'nutricion',
+      'mediterránea', 'mediterranea', 'DASH',
+      'ultraprocesados', 'ultraprocesado', 'procesados',
+      'azúcar', 'azucar', 'sal', 'sodio',
+      'ayuno', 'intermitente',
+      'cronoalimentación', 'cronoalimentacion', 'circadiano', 'ritmo',
+      'desayuno', 'cena', 'almuerzo',
+      'sobrepeso', 'IMC', 'perímetro', 'perimetro', 'cintura',
+      'obesidad', 'obeso',
+
+      // ===== BIOQUIMICOS / SUPLEMENTOS =====
+      // Lipidos y marcadores
+      'omega', 'omega-3', 'EPA', 'DHA',
+      'homocisteína', 'homocisteina', 'PCR',
+      // Vitaminas / minerales
+      'vitamina', 'D3', 'B12', 'cobalamina', 'folato',
+      'hierro', 'ferritina', 'anemia',
+      'magnesio', 'potasio', 'calcio', 'zinc', 'selenio',
+      // Glucosa / diabetes
+      'glucosa', 'glucemia', 'glicemia',
+      'insulina', 'insulinoresistencia',
+      'diabetes', 'prediabetes', 'diabético', 'diabetico',
+      'HbA1c', 'hemoglobina', 'glicosilada',
+      'índice', 'indice', 'glucémico', 'glucemico', 'carga',
+      // Macros
+      'proteína', 'proteina', 'aminoácidos', 'aminoacidos',
+      'carbohidratos', 'hidratos',
+      'grasas', 'saturadas', 'insaturadas', 'trans',
+      'fructosa', 'sacarosa',
+      'fibra', 'prebióticos', 'prebioticos', 'probióticos', 'probioticos', 'microbiota',
+      // Antioxidantes
+      'antioxidantes', 'polifenoles', 'flavonoides', 'resveratrol', 'catequinas',
+      // Hormonas
+      'cortisol', 'adrenalina', 'catecolaminas',
+      'testosterona', 'estrógenos', 'estrogenos',
+      'TSH', 'tiroides', 'tiroideo',
+
+      // ===== WELLBEING =====
+      'estrés', 'estres', 'ansiedad', 'ansioso',
+      'sueño', 'sueno', 'dormir', 'insomnio',
+      'apnea', 'ronquido',
+      'descanso', 'fatiga', 'cansancio',
+      'meditación', 'meditacion', 'mindfulness', 'respiración', 'respiracion',
+      'bienestar', 'salud', 'mental',
+      'depresión', 'depresion', 'ánimo', 'animo',
+      'relajación', 'relajacion',
+      'soledad', 'conexión', 'conexion',
+
+      // ===== MEDICACION =====
+      'estatinas', 'estatina', 'ezetimiba', 'fibratos', 'PCSK9',
+      'ARA-II', 'IECA', 'betabloqueante', 'betabloqueantes',
+      'diurético', 'diuretico', 'anticoagulante', 'antiagregante',
+      'aspirina', 'AAS', 'clopidogrel',
+      'anticoagulación', 'anticoagulacion', 'Sintrom',
+      'antihipertensivo', 'antihipertensivos',
+
+      // ===== PRUEBAS =====
+      'electrocardiograma', 'ECG', 'electro',
+      'ecocardiograma', 'ecocardio', 'ecografía', 'ecografia',
+      'holter', 'ergometría', 'ergometria', 'prueba',
+      'cateterismo', 'coronariografía', 'coronariografia',
+      'TAC', 'resonancia', 'RMN',
+      'analítica', 'analitica', 'perfil', 'lipídico', 'lipidico',
+      'marcapasos', 'desfibrilador', 'DAI', 'stent', 'bypass', 'ablación', 'ablacion',
+
+      // ===== AMBIENTAL =====
+      'frío', 'frio', 'calor', 'temperatura',
+      'ola', 'contaminación', 'contaminacion', 'polución', 'polucion',
+      'sol', 'luz', 'exposición', 'exposicion',
+      'sauna', 'ducha',
+
+      // ===== OTROS (cafe, te, hidratacion) =====
+      'café', 'cafe', 'cafeína', 'cafeina',
+      'té', 'te', 'infusión', 'infusion',
+      'chocolate', 'cacao',
+      'agua', 'hidratación', 'hidratacion', 'deshidratación', 'deshidratacion',
     ],
   },
   signature: {
