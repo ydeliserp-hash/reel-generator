@@ -493,14 +493,22 @@ async function applyOverlays(
   const barTotalDur = concatDuration > 0
     ? concatDuration
     : (segments.length > 0 ? segments[segments.length - 1].end : 0);
+  logger?.info?.(
+    { concatDurationParam: concatDuration, segmentsLastEnd: segments[segments.length - 1]?.end, barTotalDur },
+    'progress bar setup'
+  );
   if (barTotalDur > 0) {
-    {
-      const barH = 8;
-      const barY = 0; // pegada al borde superior
-      filters.push(
-        `drawbox=x=0:y=${barY}:w='${BRAND.video.width}*t/${barTotalDur}':h=${barH}:color=${goldColor}:t=fill`
-      );
-    }
+    // 12px de alto + un pequeno fondo gris semi-transparente para que la
+    // barra dorada destaque incluso sobre fondos amarillentos/dorados del
+    // pattern (la barra "vacia" se ve como una linea fina gris).
+    const barH = 12;
+    const barY = 0;
+    filters.push(
+      `drawbox=x=0:y=${barY}:w=${BRAND.video.width}:h=${barH}:color=black@0.45:t=fill`
+    );
+    filters.push(
+      `drawbox=x=0:y=${barY}:w='${BRAND.video.width}*t/${barTotalDur}':h=${barH}:color=${goldColor}:t=fill`
+    );
   }
 
   // Capa 1: subtitulos quemados (renderer libass via filtro `ass`).
@@ -827,31 +835,34 @@ async function generateCoverImage({
   // segura y se respeta en el feed/perfil de IG sin cortes en los lados.
   // El auto-shrink de abajo baja el tamano para titulos largos.
   const maxTitleW = W - 320;
-  // Algoritmo: probar 1 linea, 2 lineas, 3 lineas en ese orden con baseTitleSize.
-  // Usar la primera que quepa entera. Si NINGUNA cabe en 3 lineas a baseTitleSize,
-  // hacer auto-shrink con 3 lineas (mejor que 2 muy pequenas).
-  function fitsAt(lines, size) {
+  // Algoritmo de tamano variable RESPETANDO margen lateral fijo:
+  //   - Probamos splits de 1, 2, 3, 4 lineas
+  //   - Para cada split, calculamos el tamano de fuente MAXIMO que permite
+  //     que la linea mas larga quepa en maxTitleW (cap a baseTitleSize)
+  //   - Elegimos el split con el tamano resultante MAS GRANDE
+  //   - Empate: preferir menos lineas (visual mas limpio)
+  // Resultado: titulo corto -> 1 linea grande, titulo largo -> 4 lineas mas
+  // pequenas, pero NUNCA se sale del margen.
+  const candidates = [];
+  for (let n = 1; n <= 4; n++) {
+    let lines;
+    if (n === 1) {
+      lines = [titleText];
+    } else {
+      lines = splitNLines(titleText, n);
+      if (!lines) continue; // no hay suficientes palabras para n lineas
+    }
     const longest = lines.reduce((m, l) => Math.max(m, l.length), 0);
-    return longest * size * charWidthFactor <= maxTitleW;
+    if (longest === 0) continue;
+    const fitSize = Math.floor(maxTitleW / (longest * charWidthFactor));
+    const effectiveSize = Math.min(baseTitleSize, fitSize);
+    candidates.push({ lines, lineCount: n, size: effectiveSize });
   }
-  let titleLines;
-  let titleSize = baseTitleSize;
-  const oneLine = [titleText];
-  const twoLines = splitNLines(titleText, 2);
-  const threeLines = splitNLines(titleText, 3);
-  if (fitsAt(oneLine, baseTitleSize)) {
-    titleLines = oneLine;
-  } else if (twoLines && fitsAt(twoLines, baseTitleSize)) {
-    titleLines = twoLines;
-  } else if (threeLines && fitsAt(threeLines, baseTitleSize)) {
-    titleLines = threeLines;
-  } else {
-    // Auto-shrink con 3 lineas (o 2 si no hay suficientes palabras).
-    const fallback = threeLines || twoLines || oneLine;
-    const longest = fallback.reduce((m, l) => Math.max(m, l.length), 0);
-    titleSize = Math.max(56, Math.floor(maxTitleW / (longest * charWidthFactor)));
-    titleLines = fallback;
-  }
+  // Ordenar por: size desc, lineCount asc
+  candidates.sort((a, b) => b.size - a.size || a.lineCount - b.lineCount);
+  const chosen = candidates[0] || { lines: [titleText], size: baseTitleSize };
+  let titleLines = chosen.lines;
+  let titleSize = Math.max(56, chosen.size);
 
   // Escapado para drawtext text='...' :
   //   - \  -> \\\\ (doble: una vez para JS string, otra para ffmpeg)
