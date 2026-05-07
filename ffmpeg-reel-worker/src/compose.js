@@ -820,7 +820,10 @@ async function generateCoverImage({
   // 0.58 es el factor real promedio de Montserrat Bold (testeado: 0.50 hacia
   // que el titulo se desbordase del canvas). maxTitleW deja un margen seguro.
   const charWidthFactor = 0.58;
-  const baseTitleSize = 140;
+  // 105pt (antes 140) — la doctora pidio "un poquito mas pequena" la letra
+  // del titulo de la portada. Con 3 lineas balanceadas (max ~15 chars) el
+  // titulo cabe directamente sin auto-shrink.
+  const baseTitleSize = 105;
   const maxTitleW = W - 80; // margen 40 a cada lado, suficiente para no rozar
   // Algoritmo: probar 1 linea, 2 lineas, 3 lineas en ese orden con baseTitleSize.
   // Usar la primera que quepa entera. Si NINGUNA cabe en 3 lineas a baseTitleSize,
@@ -861,10 +864,11 @@ async function generateCoverImage({
       .replace(/:/g, '\\:')
       .replace(/%/g, '\\%');
 
-  // Posicionar el bloque de titulo PEGADO debajo de la imagen (acaba en y=820)
-  // con un gap de ~30px. La doctora prefiere el titulo arriba.
+  // Posicionar el bloque de titulo INMEDIATAMENTE despues de la imagen (acaba
+  // en y=820), sin gap. La doctora prefiere el titulo lo mas arriba posible
+  // para que respire abajo y la firma quede mas separada.
   const titleLineHeight = Math.round(titleSize * 1.15);
-  const titleStartY = 850;
+  const titleStartY = 820;
 
   // Tecnica de sombra DIFUMINADA (gaussian blur real, no outline ni shadowx/y):
   //   1) crear un canvas transparente (color filter source)
