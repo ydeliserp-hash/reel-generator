@@ -820,11 +820,14 @@ async function generateCoverImage({
   // 0.58 es el factor real promedio de Montserrat Bold (testeado: 0.50 hacia
   // que el titulo se desbordase del canvas). maxTitleW deja un margen seguro.
   const charWidthFactor = 0.58;
-  // 105pt (antes 140) — la doctora pidio "un poquito mas pequena" la letra
-  // del titulo de la portada. Con 3 lineas balanceadas (max ~15 chars) el
-  // titulo cabe directamente sin auto-shrink.
   const baseTitleSize = 105;
-  const maxTitleW = W - 80; // margen 40 a cada lado, suficiente para no rozar
+  // Margen lateral GRANDE (120px cada lado) — el grid de IG corta los bordes
+  // laterales al mostrar la portada en el feed/perfil. Si el titulo cae cerca
+  // del borde, aparece cortado. Con 120px de margen el texto vive en la zona
+  // central segura (840px de ancho) y se respeta en cualquier preview de IG.
+  // El auto-shrink de abajo se encarga de que titulos largos bajen de tamano
+  // automaticamente hasta caber en este ancho seguro.
+  const maxTitleW = W - 240;
   // Algoritmo: probar 1 linea, 2 lineas, 3 lineas en ese orden con baseTitleSize.
   // Usar la primera que quepa entera. Si NINGUNA cabe en 3 lineas a baseTitleSize,
   // hacer auto-shrink con 3 lineas (mejor que 2 muy pequenas).
@@ -864,11 +867,12 @@ async function generateCoverImage({
       .replace(/:/g, '\\:')
       .replace(/%/g, '\\%');
 
-  // Posicionar el bloque de titulo INMEDIATAMENTE despues de la imagen (acaba
-  // en y=820), sin gap. La doctora prefiere el titulo lo mas arriba posible
-  // para que respire abajo y la firma quede mas separada.
+  // Posicionar el titulo SOLAPANDO los ultimos 50px de la imagen Gemini
+  // (acaba en y=820). El overlap es intencionado — situa el titulo mas
+  // hacia el centro vertical del cover, lo que mejora la visibilidad
+  // cuando IG recorta para mostrar la portada en el grid del perfil.
   const titleLineHeight = Math.round(titleSize * 1.15);
-  const titleStartY = 820;
+  const titleStartY = 770;
 
   // Tecnica de sombra DIFUMINADA (gaussian blur real, no outline ni shadowx/y):
   //   1) crear un canvas transparente (color filter source)
