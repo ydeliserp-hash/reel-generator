@@ -821,13 +821,12 @@ async function generateCoverImage({
   // que el titulo se desbordase del canvas). maxTitleW deja un margen seguro.
   const charWidthFactor = 0.58;
   const baseTitleSize = 105;
-  // Margen lateral GRANDE (120px cada lado) — el grid de IG corta los bordes
-  // laterales al mostrar la portada en el feed/perfil. Si el titulo cae cerca
-  // del borde, aparece cortado. Con 120px de margen el texto vive en la zona
-  // central segura (840px de ancho) y se respeta en cualquier preview de IG.
-  // El auto-shrink de abajo se encarga de que titulos largos bajen de tamano
-  // automaticamente hasta caber en este ancho seguro.
-  const maxTitleW = W - 240;
+  // Margen lateral GRANDE (160px cada lado) — el grid de IG recorta los reels
+  // a aspect ~9:16, lo que en una portada 4:5 corresponde a la franja central
+  // de ~760px de ancho. Con 160px de margen el texto vive dentro de esa zona
+  // segura y se respeta en el feed/perfil de IG sin cortes en los lados.
+  // El auto-shrink de abajo baja el tamano para titulos largos.
+  const maxTitleW = W - 320;
   // Algoritmo: probar 1 linea, 2 lineas, 3 lineas en ese orden con baseTitleSize.
   // Usar la primera que quepa entera. Si NINGUNA cabe en 3 lineas a baseTitleSize,
   // hacer auto-shrink con 3 lineas (mejor que 2 muy pequenas).
