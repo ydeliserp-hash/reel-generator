@@ -466,6 +466,7 @@ async function applyOverlays(
     outputPath,
     introSilence = 0,        // segundos de silencio + freeze del primer frame al inicio
     segments = [],           // para detectar numeros y dibujar pops visuales
+    concatDuration = 0,      // duracion real del video concat (incluye extension por silencio trailing)
   },
   logger
 ) {
@@ -485,15 +486,19 @@ async function applyOverlays(
   // Capa 0: barra de progreso dorada en el borde superior. Crece linealmente
   // con el tiempo del concat. Refuerza la psicologia de "casi acaba" → la
   // gente termina mas reels, IG lo premia.
+  // Usa concatDuration explicito (incluye extension por silencio trailing del
+  // audio). Fallback a segments[last].end si no se paso explicitamente.
   // Nota: se evalua a t=0 durante el frame congelado del intro_silence (la
   // barra esta en 0% mientras la voz no ha empezado, lo cual es coherente).
-  if (segments.length > 0) {
-    const concatDur = segments[segments.length - 1].end;
-    if (concatDur > 0) {
+  const barTotalDur = concatDuration > 0
+    ? concatDuration
+    : (segments.length > 0 ? segments[segments.length - 1].end : 0);
+  if (barTotalDur > 0) {
+    {
       const barH = 8;
       const barY = 0; // pegada al borde superior
       filters.push(
-        `drawbox=x=0:y=${barY}:w='${BRAND.video.width}*t/${concatDur}':h=${barH}:color=${goldColor}:t=fill`
+        `drawbox=x=0:y=${barY}:w='${BRAND.video.width}*t/${barTotalDur}':h=${barH}:color=${goldColor}:t=fill`
       );
     }
   }
@@ -1359,6 +1364,10 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
   // Si no hay nada, applyOverlays escribe directo al final.
   const needsExtraStep = useOutro || useMusic;
   const mainVideoPath = needsExtraStep ? path.join(sessionDir, 'main.mp4') : finalOutputPath;
+  // concatDuration = suma real de audioDurations (incluye extension por
+  // silencio trailing). Se usa para que la barra de progreso llegue al 100%
+  // exactamente al final del video, no antes.
+  const concatDuration = audioDurations.reduce((a, b) => a + b, 0);
   await applyOverlays(
     {
       videoPath: concatPath,
@@ -1370,6 +1379,7 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
       outputPath: mainVideoPath,
       introSilence,
       segments: spec.segments,
+      concatDuration,
     },
     logger
   );
