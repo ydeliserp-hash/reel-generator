@@ -950,21 +950,21 @@ async function generateCoverImage({
       .replace(/:/g, '\\:')
       .replace(/%/g, '\\%');
 
-  // Layout DINAMICO. La imagen Gemini se preserva GRANDE para no recortar
-  // el sujeto (corazon, cerebro, etc.). Los textos van DEBAJO sin solapar.
-  //  - Sin header: imagen y=80-820 (h=740), titulo y=830 (10px debajo, SIN overlap)
-  //  - Con header: imagen y=40-680 (h=640), header y=715, titulo y=795
-  const imgY = hasHeader ? 40 : 80;
-  const imgH = hasHeader ? 640 : 740;
+  // Layout. La imagen Gemini se preserva SIEMPRE en su posicion clasica
+  // (y=80, h=740) para que el sujeto (corazon, cerebro, etc.) se vea entero.
+  // Los textos van debajo SOLAPANDO ligeramente el fondo de la imagen
+  // (la zona inferior suele ser fondo/contexto, no el sujeto).
+  //  - Sin header: titulo y=770 (overlap 50px) — layout clasico
+  //  - Con header: header y=750 (overlap 70px), titulo y=820 (debajo del header)
+  const imgY = 80;
+  const imgH = 740;
   const imgW = 1000;
   const headerFontSize = 50;
-  const headerY = hasHeader ? imgY + imgH + 35 : 0; // y=715 con header
-  // Interlineado mas compacto del titulo (1.05 vs 1.15) — la doctora prefiere
-  // las lineas pegadas para que el titulo se lea como un bloque unitario.
+  const headerY = hasHeader ? 750 : 0; // overlap con ultimos ~70px de la imagen
+  // Interlineado mas compacto del titulo (1.05 vs 1.15) — las lineas pegadas
+  // se leen como un bloque unitario.
   const titleLineHeight = Math.round(titleSize * 1.05);
-  const titleStartY = hasHeader
-    ? headerY + headerFontSize + 30  // 715 + 50 + 30 = 795
-    : 830;                            // sin header: 10px debajo de la imagen
+  const titleStartY = hasHeader ? 820 : 770;
   const titleBlockH = titleSize + (titleLines.length - 1) * titleLineHeight;
   const titleEndY = titleStartY + titleBlockH;
   const subtitleFontSize = 42;
