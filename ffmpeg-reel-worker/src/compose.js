@@ -407,23 +407,17 @@ async function buildVideoSegment(
  * Fase 2: concatena los segmentos con xfade.
  * Para N segmentos calcula offsets como cumsum(audioDur).
  */
-async function concatenateWithXfade(
-  { segmentPaths, audioDurations, outputPath },
-  logger
-) {
-  if (segmentPaths.length === 0) {
-    throw new Error('concatenateWithXfade: no segments');
-  }
+// Concat xfade interno: hace una pasada de ffmpeg con xfade encadenado
+// sobre los segmentos pasados. Util como bloque base; concatenateWithXfade
+// (publico) batchea si hay demasiados segmentos para esta primitiva.
+async function _xfadeConcatSingle(segmentPaths, audioDurations, outputPath, logger) {
   if (segmentPaths.length === 1) {
-    // Caso trivial: copia directa.
     const args = ['-y', '-i', segmentPaths[0], '-c', 'copy', outputPath];
     await runFfmpeg(args, logger);
     return outputPath;
   }
-
   const xfadeDur = BRAND.video.xfade_duration;
   const xfadeName = BRAND.video.xfade_transition;
-
   const inputs = segmentPaths.flatMap((p) => ['-i', p]);
   const filters = [];
   let prevLabel = '[0:v]';
@@ -436,7 +430,6 @@ async function concatenateWithXfade(
     );
     prevLabel = outLabel;
   }
-
   const args = [
     '-y',
     ...inputs,
@@ -449,6 +442,69 @@ async function concatenateWithXfade(
     outputPath,
   ];
   await runFfmpeg(args, logger);
+  return outputPath;
+}
+
+// Concat sin xfade (corte duro) usando el demuxer concat de ffmpeg.
+// Re-encoda para evitar problemas con timestamps de batches separados.
+async function _hardConcat(segmentPaths, outputPath, logger) {
+  // Escribir lista de concat
+  const listPath = outputPath.replace(/\.mp4$/, '.concat.txt');
+  const lines = segmentPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+  await writeFile(listPath, lines, 'utf8');
+  const args = [
+    '-y',
+    '-f', 'concat', '-safe', '0',
+    '-i', listPath,
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '21',
+    '-an',
+    outputPath,
+  ];
+  await runFfmpeg(args, logger, 'hard-concat');
+  return outputPath;
+}
+
+async function concatenateWithXfade(
+  { segmentPaths, audioDurations, outputPath },
+  logger
+) {
+  if (segmentPaths.length === 0) {
+    throw new Error('concatenateWithXfade: no segments');
+  }
+
+  // Para pocos segmentos, una sola pasada de xfade es lo mas eficiente.
+  // Para muchos segmentos (>=10), el filter_complex con xfade encadenado se
+  // satura en memoria del VPS — dividimos en batches de 6, hacemos xfade
+  // dentro de cada batch, y unimos los batches con concat duro (corte).
+  // Solo perdemos el xfade en los boundaries de batch (1 por cada 6 segs),
+  // que es un buen trade-off frente a fallar.
+  const BATCH_SIZE = 6;
+  if (segmentPaths.length < BATCH_SIZE * 2) {
+    return _xfadeConcatSingle(segmentPaths, audioDurations, outputPath, logger);
+  }
+
+  logger?.info?.({ count: segmentPaths.length, batchSize: BATCH_SIZE }, 'concat por batches (segmentos altos)');
+  const sessionDir = path.dirname(outputPath);
+  const batches = [];
+  for (let i = 0; i < segmentPaths.length; i += BATCH_SIZE) {
+    batches.push({
+      paths: segmentPaths.slice(i, i + BATCH_SIZE),
+      durations: audioDurations.slice(i, i + BATCH_SIZE),
+      indexStart: i,
+    });
+  }
+  // Procesar cada batch en serie (no en paralelo para no saturar el VPS)
+  const batchOutputs = [];
+  for (let b = 0; b < batches.length; b++) {
+    const batchOut = path.join(sessionDir, `batch_${String(b).padStart(2, '0')}.mp4`);
+    await _xfadeConcatSingle(batches[b].paths, batches[b].durations, batchOut, logger);
+    batchOutputs.push(batchOut);
+    logger?.info?.({ batch: b, output: batchOut }, 'batch xfade done');
+  }
+  // Union final: concat duro entre batches
+  await _hardConcat(batchOutputs, outputPath, logger);
   return outputPath;
 }
 

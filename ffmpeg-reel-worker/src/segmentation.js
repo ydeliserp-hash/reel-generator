@@ -12,9 +12,6 @@
  *   - Si es muy corta (<MIN_IDEA_DUR), fusionarla con la siguiente
  */
 
-const MIN_IDEA_DUR = 2.5;
-const MAX_IDEA_DUR = 7.0;
-
 function endsWithStrong(text) {
   return /[.!?¿¡]\s*$/u.test(text);
 }
@@ -22,7 +19,7 @@ function normalize(text) {
   return String(text || '').replace(/\s+/g, ' ').trim();
 }
 
-function splitLong(idea) {
+function splitLong(idea, MAX_IDEA_DUR) {
   const dur = idea.end - idea.start;
   if (dur <= MAX_IDEA_DUR) return [idea];
   const midTime = idea.start + dur / 2;
@@ -69,12 +66,24 @@ export function smartSegment(transcript) {
   if (rawWords.length === 0 && rawSegments.length === 0) return [];
 
   if (rawWords.length === 0) {
-    // Fallback: usar segmentos de Whisper directamente
     return rawSegments.map((s) => ({
       start: s.start,
       end: s.end,
       text: normalize(s.text),
     }));
+  }
+
+  // Parametros dinamicos segun duracion total. El worker FFmpeg se queda
+  // corto con >15 segmentos en su pipeline de concat-xfade, asi que en
+  // audios largos producimos chunks mas largos.
+  const totalDur = rawWords[rawWords.length - 1].end || 0;
+  let MIN_IDEA_DUR, MAX_IDEA_DUR;
+  if (totalDur > 120) {
+    MIN_IDEA_DUR = 5.0; MAX_IDEA_DUR = 12.0;
+  } else if (totalDur > 60) {
+    MIN_IDEA_DUR = 4.0; MAX_IDEA_DUR = 10.0;
+  } else {
+    MIN_IDEA_DUR = 2.5; MAX_IDEA_DUR = 7.0;
   }
 
   // 1) Agrupar palabras en oraciones que terminen en puntuacion fuerte
@@ -99,7 +108,7 @@ export function smartSegment(transcript) {
 
   // 2) Partir oraciones demasiado largas
   let split = [];
-  for (const s of sentences) split.push(...splitLong(s));
+  for (const s of sentences) split.push(...splitLong(s, MAX_IDEA_DUR));
 
   // 3) Fusionar oraciones muy cortas con la siguiente
   const merged = [];
@@ -116,6 +125,22 @@ export function smartSegment(transcript) {
       }
     }
     merged.push({ start: idea.start, end: idea.end, text: normalize(idea.text) });
+  }
+
+  // 4) HARD CAP a 12 segmentos — fusiona los pares adyacentes mas cortos
+  // hasta bajar, evitando que el worker se sature en concat-xfade.
+  const MAX_SEGMENTS = 12;
+  while (merged.length > MAX_SEGMENTS) {
+    let bestIdx = -1;
+    let bestSum = Infinity;
+    for (let i = 0; i < merged.length - 1; i++) {
+      const sum = (merged[i].end - merged[i].start) + (merged[i + 1].end - merged[i + 1].start);
+      if (sum < bestSum) { bestSum = sum; bestIdx = i; }
+    }
+    if (bestIdx < 0) break;
+    merged[bestIdx].end = merged[bestIdx + 1].end;
+    merged[bestIdx].text = normalize(merged[bestIdx].text + ' ' + merged[bestIdx + 1].text);
+    merged.splice(bestIdx + 1, 1);
   }
 
   return merged;
