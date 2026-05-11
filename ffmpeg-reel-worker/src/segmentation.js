@@ -73,15 +73,17 @@ export function smartSegment(transcript) {
     }));
   }
 
-  // Parametros dinamicos segun duracion total. Tras mejorar el concat por
-  // batches, el worker tolera hasta ~16 segmentos sin saturarse.
-  // Target: ~1 imagen cada 5 segundos para reels de cualquier duracion.
+  // Parametros dinamicos segun duracion. MIN bajo (2.5) preserva segmentos
+  // cortos enfocados en UNA idea -> mejor alineacion imagen-audio porque la
+  // imagen Gemini se genera del texto del segmento. Si mergeamos demasiado,
+  // un segmento tiene 2 ideas y la imagen solo refleja una.
+  // Target: ~1 imagen cada 6s para audios 60-120s.
   const totalDur = rawWords[rawWords.length - 1].end || 0;
   let MIN_IDEA_DUR, MAX_IDEA_DUR, MAX_SEGMENTS;
   if (totalDur > 120) {
-    MIN_IDEA_DUR = 4.0; MAX_IDEA_DUR = 8.0; MAX_SEGMENTS = 20;
+    MIN_IDEA_DUR = 3.0; MAX_IDEA_DUR = 8.0; MAX_SEGMENTS = 18;
   } else if (totalDur > 60) {
-    MIN_IDEA_DUR = 3.0; MAX_IDEA_DUR = 6.0; MAX_SEGMENTS = 16;
+    MIN_IDEA_DUR = 2.5; MAX_IDEA_DUR = 6.5; MAX_SEGMENTS = 14;
   } else {
     MIN_IDEA_DUR = 2.5; MAX_IDEA_DUR = 5.5; MAX_SEGMENTS = 12;
   }
