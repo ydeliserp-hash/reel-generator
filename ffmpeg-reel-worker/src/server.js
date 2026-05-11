@@ -34,6 +34,7 @@ import { composeReel } from './compose.js';
 import { ensureGradientBackground, ensureResizedLogo, ensureOutroClipsForAllPatterns } from './utils/background.js';
 import { BRAND, pctY } from './branding.js';
 import { smartSegment } from './segmentation.js';
+import { probeVideo } from './utils/probe.js';
 
 // ---------------------------------------------------------------------------
 // Configuracion via entorno
@@ -492,9 +493,42 @@ app.get('/output/:sessionId', async (req, res) => {
     return res.status(404).json({ error: 'output_not_found', session_id: sessionId });
   }
 
+  // Validacion del MP4 antes de servirlo. Si esta truncado (worker reiniciado
+  // a mitad, OOM, etc.), ffprobe falla o devuelve duration null/0. En ese
+  // caso devolvemos 500 con mensaje claro en vez de un blob roto que el
+  // navegador no puede reproducir.
+  if (stat.size < 50000) {
+    req.log.warn({ sessionId, size: stat.size }, 'output mp4 demasiado pequeno (probablemente truncado)');
+    return res.status(500).json({
+      error: 'output_invalid',
+      message: `MP4 demasiado pequeno (${stat.size} bytes) — probablemente el compose se interrumpio. Vuelve a generarlo.`,
+      session_id: sessionId,
+    });
+  }
+  let probe;
+  try {
+    probe = await probeVideo(outputPath);
+  } catch (err) {
+    req.log.warn({ sessionId, err: err.message?.slice(0, 200) }, 'output mp4 invalido (ffprobe fallo)');
+    return res.status(500).json({
+      error: 'output_invalid',
+      message: 'El MP4 esta corrupto (ffprobe no lo puede leer). Probablemente el compose se interrumpio. Vuelve a generarlo.',
+      session_id: sessionId,
+    });
+  }
+  if (!probe.duration || probe.duration < 1 || !probe.width || !probe.height) {
+    req.log.warn({ sessionId, probe }, 'output mp4 sin streams validos');
+    return res.status(500).json({
+      error: 'output_invalid',
+      message: `MP4 sin streams validos (duration=${probe.duration}, ${probe.width}x${probe.height}). Vuelve a generarlo.`,
+      session_id: sessionId,
+    });
+  }
+
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Length', String(stat.size));
   res.setHeader('Content-Disposition', `attachment; filename="reel-${sessionId}.mp4"`);
+  res.setHeader('X-Video-Duration', String(probe.duration.toFixed(2)));
 
   let cleaned = false;
   const cleanup = () => {
