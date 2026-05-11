@@ -959,7 +959,10 @@ async function generateCoverImage({
   const imgW = 1000;
   const headerFontSize = 50;
   const headerY = hasHeader ? imgY + imgH + 35 : 0; // ej. 655 si hay header
-  const titleLineHeight = Math.round(titleSize * 1.15);
+  // Interlineado mas compacto del titulo (1.05 vs 1.15 antes) — la doctora
+  // prefiere las lineas mas pegadas para que el titulo se lea como un bloque
+  // unitario y no como lineas separadas.
+  const titleLineHeight = Math.round(titleSize * 1.05);
   const titleStartY = hasHeader
     ? headerY + headerFontSize + 30  // 655 + 50 + 30 = 735
     : 770;                            // sin header: mismo layout que antes
@@ -1025,10 +1028,10 @@ async function generateCoverImage({
   }
 
   // Capa 5 (OPCIONAL): mini encabezado encima del titulo. Letra mas pequena,
-  // Bold dorado, con sombra simple. Solo si se proporciono `header`.
+  // REGULAR (no bold) dorado, con sombra simple. Solo si se proporciono `header`.
   if (hasHeader) {
     filterParts.push(
-      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(headerText)}':fontsize=${headerFontSize}:fontcolor=${goldHex}:borderw=2:bordercolor=black@0.7:shadowcolor=black@0.5:shadowx=3:shadowy=3:x=(w-text_w)/2:y=${headerY}:expansion=none[withHeader]`
+      `[${lastV}]drawtext=fontfile='${escapeArg(regularFontFile)}':text='${escapeArg(headerText)}':fontsize=${headerFontSize}:fontcolor=${goldHex}:borderw=2:bordercolor=black@0.7:shadowcolor=black@0.5:shadowx=3:shadowy=3:x=(w-text_w)/2:y=${headerY}:expansion=none[withHeader]`
     );
     lastV = 'withHeader';
   }
