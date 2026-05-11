@@ -112,6 +112,11 @@ export const BRAND = {
       'meditación', 'meditacion', 'mindfulness', 'respiración', 'respiracion',
       'depresión', 'depresion',
 
+      // ===== PSICOLOGIA / CONDUCTA =====
+      'cerebro', 'dopamina', 'condicionamiento', 'deseo', 'emocional',
+      'motores', 'rituales', 'voluntad', 'compromiso', 'estrategia',
+      'surfear', 'fecha', 'ayuda', 'profesional',
+
       // ===== MEDICACION =====
       'estatinas', 'estatina', 'ezetimiba', 'fibratos', 'PCSK9',
       'ARA-II', 'IECA', 'betabloqueante', 'betabloqueantes',

@@ -73,17 +73,17 @@ export function smartSegment(transcript) {
     }));
   }
 
-  // Parametros dinamicos segun duracion total. El worker FFmpeg se queda
-  // corto con >15 segmentos en su pipeline de concat-xfade, asi que en
-  // audios largos producimos chunks mas largos.
+  // Parametros dinamicos segun duracion total. Tras mejorar el concat por
+  // batches, el worker tolera hasta ~16 segmentos sin saturarse.
+  // Target: ~1 imagen cada 5 segundos para reels de cualquier duracion.
   const totalDur = rawWords[rawWords.length - 1].end || 0;
-  let MIN_IDEA_DUR, MAX_IDEA_DUR;
+  let MIN_IDEA_DUR, MAX_IDEA_DUR, MAX_SEGMENTS;
   if (totalDur > 120) {
-    MIN_IDEA_DUR = 5.0; MAX_IDEA_DUR = 12.0;
+    MIN_IDEA_DUR = 4.0; MAX_IDEA_DUR = 8.0; MAX_SEGMENTS = 20;
   } else if (totalDur > 60) {
-    MIN_IDEA_DUR = 4.0; MAX_IDEA_DUR = 10.0;
+    MIN_IDEA_DUR = 3.0; MAX_IDEA_DUR = 6.0; MAX_SEGMENTS = 16;
   } else {
-    MIN_IDEA_DUR = 2.5; MAX_IDEA_DUR = 7.0;
+    MIN_IDEA_DUR = 2.5; MAX_IDEA_DUR = 5.5; MAX_SEGMENTS = 12;
   }
 
   // 1) Agrupar palabras en oraciones que terminen en puntuacion fuerte
@@ -127,9 +127,8 @@ export function smartSegment(transcript) {
     merged.push({ start: idea.start, end: idea.end, text: normalize(idea.text) });
   }
 
-  // 4) HARD CAP a 12 segmentos — fusiona los pares adyacentes mas cortos
+  // 4) HARD CAP dinamico — fusiona los pares adyacentes mas cortos
   // hasta bajar, evitando que el worker se sature en concat-xfade.
-  const MAX_SEGMENTS = 12;
   while (merged.length > MAX_SEGMENTS) {
     let bestIdx = -1;
     let bestSum = Infinity;
