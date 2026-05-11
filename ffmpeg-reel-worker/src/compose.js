@@ -841,7 +841,7 @@ async function applyOverlays(
  */
 async function generateCoverImage({
   outputPath, bgPath, geminiImagePath,
-  title, hook, fontDir,
+  title, header, subtitle, hook, fontDir,
 }, logger) {
   const W = BRAND.video.width;     // 1080
   const H = BRAND.video.height;    // 1350
@@ -850,10 +850,16 @@ async function generateCoverImage({
   const navyAlpha = ffmpegColorAlpha(BRAND.colors.bg_dark, 0.55);
   const titleFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_title);
   const sigFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_signature);
+  const regularFontFile = path.posix.join(fontDir.replace(/\\/g, '/'), BRAND.fonts.file_signature);
 
-  // Limpiar y truncar el gancho a una linea legible
-  const hookText = String(hook || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  // Texto principal (obligatorio)
   const titleText = String(title || '').trim();
+  // Mini encabezado (OPCIONAL, va ENCIMA del titulo, letra mas pequena bold)
+  const headerText = String(header || '').trim();
+  // Subtitulo (OPCIONAL, va DEBAJO del titulo, letra mas pequena NO bold)
+  const subtitleText = String(subtitle || '').trim();
+  const hasHeader = headerText.length > 0;
+  const hasSubtitle = subtitleText.length > 0;
 
   // Layout (en pixels):
   //   imagen Gemini: y=80 → y=820, ancho 1000 (centrado)
@@ -944,12 +950,23 @@ async function generateCoverImage({
       .replace(/:/g, '\\:')
       .replace(/%/g, '\\%');
 
-  // Posicionar el titulo SOLAPANDO los ultimos 50px de la imagen Gemini
-  // (acaba en y=820). El overlap es intencionado — situa el titulo mas
-  // hacia el centro vertical del cover, lo que mejora la visibilidad
-  // cuando IG recorta para mostrar la portada en el grid del perfil.
+  // Layout DINAMICO en funcion de header/subtitle opcionales:
+  //  - Si NO hay header: imagen grande arriba (y=80, h=740), titulo y=770 (overlap)
+  //  - Si hay header:    imagen mas pequena (y=40, h=580), header debajo, titulo mas abajo
+  // Subtitle (si hay) se renderiza siempre DEBAJO del titulo, calculo dinamico.
+  const imgY = hasHeader ? 40 : 80;
+  const imgH = hasHeader ? 580 : 740;
+  const imgW = 1000;
+  const headerFontSize = 50;
+  const headerY = hasHeader ? imgY + imgH + 35 : 0; // ej. 655 si hay header
   const titleLineHeight = Math.round(titleSize * 1.15);
-  const titleStartY = 770;
+  const titleStartY = hasHeader
+    ? headerY + headerFontSize + 30  // 655 + 50 + 30 = 735
+    : 770;                            // sin header: mismo layout que antes
+  const titleBlockH = titleSize + (titleLines.length - 1) * titleLineHeight;
+  const titleEndY = titleStartY + titleBlockH;
+  const subtitleFontSize = 42;
+  const subtitleY = hasSubtitle ? titleEndY + 30 : 0;
 
   // Tecnica de sombra DIFUMINADA (gaussian blur real, no outline ni shadowx/y):
   //   1) crear un canvas transparente (color filter source)
@@ -970,9 +987,9 @@ async function generateCoverImage({
   const geqAlpha = `clip(min(min(X\\,W-X)\\,min(Y\\,H-Y))*255/${featherPx}\\,0\\,255)`;
   const filterParts = [
     `[0:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},format=yuv420p[bg]`,
-    `[1:v]scale=1000:740:force_original_aspect_ratio=increase,crop=1000:740,format=rgba,` +
+    `[1:v]scale=${imgW}:${imgH}:force_original_aspect_ratio=increase,crop=${imgW}:${imgH},format=rgba,` +
       `geq=r='r(X\\,Y)':g='g(X\\,Y)':b='b(X\\,Y)':a='${geqAlpha}'[gemini]`,
-    `[bg][gemini]overlay=x=(W-w)/2:y=80[withImg]`,
+    `[bg][gemini]overlay=x=(W-w)/2:y=${imgY}[withImg]`,
     // Canvas transparente del mismo tamano que el cover (fuente: filter source)
     `color=color=black@0.0:size=${W}x${H}:duration=1:rate=1,format=yuva420p[blank]`,
   ];
@@ -1006,6 +1023,25 @@ async function generateCoverImage({
     );
     lastV = outLabel;
   }
+
+  // Capa 5 (OPCIONAL): mini encabezado encima del titulo. Letra mas pequena,
+  // Bold dorado, con sombra simple. Solo si se proporciono `header`.
+  if (hasHeader) {
+    filterParts.push(
+      `[${lastV}]drawtext=fontfile='${escapeArg(titleFontFile)}':text='${escapeArg(headerText)}':fontsize=${headerFontSize}:fontcolor=${goldHex}:borderw=2:bordercolor=black@0.7:shadowcolor=black@0.5:shadowx=3:shadowy=3:x=(w-text_w)/2:y=${headerY}:expansion=none[withHeader]`
+    );
+    lastV = 'withHeader';
+  }
+
+  // Capa 6 (OPCIONAL): subtitulo debajo del titulo. Letra mas pequena,
+  // REGULAR (no bold) blanca, con sombra suave. Solo si se proporciono `subtitle`.
+  if (hasSubtitle) {
+    filterParts.push(
+      `[${lastV}]drawtext=fontfile='${escapeArg(regularFontFile)}':text='${escapeArg(subtitleText)}':fontsize=${subtitleFontSize}:fontcolor=${whiteHex}:borderw=2:bordercolor=black@0.7:shadowcolor=black@0.5:shadowx=2:shadowy=2:x=(w-text_w)/2:y=${subtitleY}:expansion=none[withSubtitle]`
+    );
+    lastV = 'withSubtitle';
+  }
+
   // Firma centrada al pie (sin gancho ni logo, diseno limpio)
   filterParts.push(
     `[${lastV}]drawtext=fontfile='${escapeArg(sigFontFile)}':text='${escapeArg('@' + (BRAND.signature.text || '').replace(/^@/, ''))}':fontsize=32:fontcolor=${goldHex}:x=(w-text_w)/2:y=H-text_h-50:expansion=none[out]`
@@ -1544,6 +1580,8 @@ export async function composeReel({ spec, sessionDir, fontDir, logger, audioFile
         bgPath: sessionBgPath,
         geminiImagePath: coverGeminiPath,
         title: titleText,
+        header: spec.cover?.header || '',       // OPCIONAL: mini encabezado encima
+        subtitle: spec.cover?.subtitle || '',   // OPCIONAL: subtitulo debajo
         hook: hookText,
         fontDir,
       }, logger);

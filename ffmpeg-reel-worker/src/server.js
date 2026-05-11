@@ -624,8 +624,16 @@ app.get('/curated', async (_req, res) => {
       <input type="file" id="audio" accept="audio/mpeg,audio/mp3,audio/wav,audio/m4a">
     </label>
     <label class="field">
-      <span>Titulo del reel</span>
+      <span>Titulo del reel (obligatorio)</span>
       <input type="text" id="topic" placeholder="Ej: Cafe y corazon">
+    </label>
+    <label class="field">
+      <span>Mini encabezado portada (opcional, encima del titulo)</span>
+      <input type="text" id="coverHeader" placeholder="Ej: SALUD CARDIOVASCULAR">
+    </label>
+    <label class="field">
+      <span>Subtitulo portada (opcional, debajo del titulo)</span>
+      <input type="text" id="coverSubtitle" placeholder="Ej: Lo que tu cardiologo quiere que sepas">
     </label>
     <button id="btnAnalyze" class="full">Analizar audio</button>
     <div class="status" id="status1"><div class="timer"><span class="spinner"></span><span id="elapsed1">0:00</span></div><div id="msg1">Subiendo...</div></div>
@@ -693,6 +701,10 @@ btnAnalyze.addEventListener('click',async()=>{
     const fd=new FormData();
     fd.append('audio',audioIn.files[0]);
     fd.append('topic',topicEl.value);
+    const ch=document.getElementById('coverHeader').value.trim();
+    const cs=document.getElementById('coverSubtitle').value.trim();
+    if(ch) fd.append('cover_header',ch);
+    if(cs) fd.append('cover_subtitle',cs);
     const r=await fetch('/analyze',{method:'POST',body:fd});
     clearInterval(tick);
     if(!r.ok){const t=await r.text();msg1.innerHTML='<span class="err">Error: '+t.slice(0,300)+'</span>';btnAnalyze.disabled=false;btnAnalyze.textContent='Analizar audio';return}
@@ -901,8 +913,18 @@ app.get(['/', '/upload'], async (_req, res) => {
     </label>
 
     <label class="field">
-      <span>Título del reel</span>
+      <span>Título del reel (obligatorio)</span>
       <input type="text" id="topic" name="topic" placeholder="Ej: Café y corazón" required>
+    </label>
+
+    <label class="field">
+      <span>Mini encabezado de portada (opcional, encima del título)</span>
+      <input type="text" id="coverHeader" name="cover_header" placeholder="Ej: SALUD CARDIOVASCULAR">
+    </label>
+
+    <label class="field">
+      <span>Subtítulo de portada (opcional, debajo del título)</span>
+      <input type="text" id="coverSubtitle" name="cover_subtitle" placeholder="Ej: Lo que tu cardiólogo quiere que sepas">
     </label>
 
     <label class="field">
@@ -1022,6 +1044,11 @@ form.addEventListener('submit', async ev=>{
   fd.append('audio',audioIn.files[0]);
   fd.append('topic',document.getElementById('topic').value);
   fd.append('style',document.getElementById('style').value||'educational');
+  // Campos opcionales de portada
+  const ch=document.getElementById('coverHeader').value.trim();
+  const cs=document.getElementById('coverSubtitle').value.trim();
+  if(ch) fd.append('cover_header',ch);
+  if(cs) fd.append('cover_subtitle',cs);
   // Modo remix: anadir imagenes propias si las hay (campos image_0..image_N)
   if(imgsIn.files && imgsIn.files.length>0){
     Array.from(imgsIn.files).forEach((f,i)=>fd.append('image_'+i,f,f.name));
@@ -1108,11 +1135,15 @@ app.post('/upload', dashboardUpload, async (req, res) => {
   const audioName = audioFile.originalname || 'audio.mp3';
   const audioMime = audioFile.mimetype || 'audio/mpeg';
 
+  const coverHeader = (req.body?.cover_header || '').toString();
+  const coverSubtitle = (req.body?.cover_subtitle || '').toString();
   try {
     const form = new FormData();
     form.append('audio', new Blob([audioBuffer], { type: audioMime }), audioName);
     form.append('topic', topic);
     form.append('style', style);
+    if (coverHeader) form.append('cover_header', coverHeader);
+    if (coverSubtitle) form.append('cover_subtitle', coverSubtitle);
     if (isRemixMode) form.append('remix', '1');
     // Forward de las imagenes propias (modo remix)
     for (let i = 0; i < imageFiles.length; i++) {
@@ -1319,6 +1350,8 @@ app.post('/analyze', analyzeUpload, async (req, res) => {
   const sessionId = req._sessionId;
   const sessionDir = req._sessionDir;
   const topic = (req.body?.topic || '').toString();
+  const coverHeader = (req.body?.cover_header || '').toString();
+  const coverSubtitle = (req.body?.cover_subtitle || '').toString();
   const audioPath = req.file.path;
   const audioName = req.file.originalname || 'audio.mp3';
   let mimeType = req.file.mimetype || 'audio/mpeg';
@@ -1359,6 +1392,8 @@ app.post('/analyze', analyzeUpload, async (req, res) => {
     const meta = {
       session_id: sessionId,
       topic,
+      cover_header: coverHeader,
+      cover_subtitle: coverSubtitle,
       audio_filename: audioName,
       audio_mime: mimeType,
       audio_path: audioPath,
@@ -1462,6 +1497,10 @@ app.post('/compose-curated', curatedUpload, async (req, res) => {
     // Sin `duration` -> el title badge se queda visible durante todo el reel
     // (mismo comportamiento que el modo automatico).
     title_badge: { show: true, text: meta.topic },
+    cover: {
+      header: meta.cover_header || '',
+      subtitle: meta.cover_subtitle || '',
+    },
     signature: '@draydeliserodriguez',
   };
 
