@@ -475,12 +475,13 @@ async function concatenateWithXfade(
   }
 
   // Para pocos segmentos, una sola pasada de xfade es lo mas eficiente.
-  // Para muchos segmentos (>=10), el filter_complex con xfade encadenado se
-  // satura en memoria del VPS — dividimos en batches de 6, hacemos xfade
-  // dentro de cada batch, y unimos los batches con concat duro (corte).
-  // Solo perdemos el xfade en los boundaries de batch (1 por cada 6 segs),
-  // que es un buen trade-off frente a fallar.
-  const BATCH_SIZE = 6;
+  // Para muchos segmentos, el filter_complex con xfade encadenado se satura
+  // en memoria del VPS — dividimos en batches, hacemos xfade dentro de cada
+  // batch, y unimos los batches con concat duro (corte). Solo perdemos el
+  // xfade en los boundaries de batch (1 por cada BATCH_SIZE segs), trade-off
+  // aceptable frente a fallar por OOM.
+  // BATCH_SIZE=4 (antes 6) — reducido para VPS con poca RAM.
+  const BATCH_SIZE = parseInt(process.env.CONCAT_BATCH_SIZE || '4', 10);
   if (segmentPaths.length < BATCH_SIZE * 2) {
     return _xfadeConcatSingle(segmentPaths, audioDurations, outputPath, logger);
   }

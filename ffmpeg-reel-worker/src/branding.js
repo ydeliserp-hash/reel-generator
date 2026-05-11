@@ -213,7 +213,9 @@ export const BRAND = {
     xfade_transition: 'fade',
     // Numero maximo de segmentos pre-procesados en paralelo en fase 1.
     // Bajar este valor si el worker se queda sin RAM o CPU.
-    max_parallel_segments: 2,
+    // 1 = secuencial (mas seguro en VPS pequenos, sin OOM). Override via env
+    // var MAX_PARALLEL_SEGMENTS.
+    max_parallel_segments: parseInt(process.env.MAX_PARALLEL_SEGMENTS || '1', 10),
   },
 };
 
