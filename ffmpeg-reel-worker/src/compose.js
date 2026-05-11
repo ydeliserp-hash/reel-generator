@@ -237,13 +237,23 @@ async function runWithConcurrency(tasks, concurrency = 2) {
 
 /**
  * Escapa una cadena para meterla DENTRO de un argumento `key='valor'`
- * de un filtro FFmpeg (drawtext, ass, etc). Solo necesitamos escapar
- * la propia comilla simple y el backslash.
+ * de un filtro FFmpeg (drawtext, ass, etc).
+ *
+ * IMPORTANTE: aunque el valor vaya entre `'...'`, FFmpeg interpreta el `:`
+ * como separador de opciones del filtro a nivel inferior. Hay que escaparlo
+ * con `\:` EXPLICITAMENTE para que un titulo como "Dejar de Fumar: ¿..."
+ * no rompa el drawtext con "Both text and text file provided".
+ *
+ * Tambien escapamos `%` por seguridad (drawtext puede interpretarlo para
+ * expansion de variables; con expansion=none no deberia importar, pero por
+ * si acaso).
  */
 function escapeFilterSingleQuoted(text) {
   return String(text)
     .replace(/\\/g, '\\\\')
-    .replace(/'/g, "\\'");
+    .replace(/'/g, "\\'")
+    .replace(/:/g, '\\:')
+    .replace(/%/g, '\\%');
 }
 
 /**
