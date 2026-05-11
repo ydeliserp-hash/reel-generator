@@ -114,8 +114,16 @@ export const BRAND = {
 
       // ===== PSICOLOGIA / CONDUCTA =====
       'cerebro', 'dopamina', 'condicionamiento', 'deseo', 'emocional',
-      'motores', 'rituales', 'voluntad', 'compromiso', 'estrategia',
-      'surfear', 'fecha', 'ayuda', 'profesional',
+      'motores', 'motor', 'rituales', 'ritual', 'voluntad', 'compromiso',
+      'estrategia', 'estrategias', 'surfear', 'fecha', 'fechas',
+      'ayuda', 'profesional',
+
+      // ===== ORDINALES (enumeraciones) =====
+      'primero', 'primer', 'segundo', 'tercero', 'tercer',
+      'cuarto', 'quinto', 'sexto',
+      'séptimo', 'septimo', 'octavo', 'noveno',
+      'décimo', 'decimo',
+      'último', 'ultimo',
 
       // ===== MEDICACION =====
       'estatinas', 'estatina', 'ezetimiba', 'fibratos', 'PCSK9',
