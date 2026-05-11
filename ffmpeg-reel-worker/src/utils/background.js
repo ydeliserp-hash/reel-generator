@@ -469,19 +469,34 @@ export async function ensureResizedLogo(originalLogoPath, resizedLogoPath, targe
  */
 export async function listBackgroundPatterns(singleFallbackPath, logger) {
   const patternsDir = path.join(path.dirname(singleFallbackPath), 'patterns');
+  // Blacklist de patterns que NO se usan en la rotacion. Default: 2,3,7,8,9
+  // (descartados por la doctora — no encajan visualmente). Configurable via
+  // env var BG_PATTERN_BLACKLIST (formato: "2,3,7" o vacia para usar todos).
+  const blacklist = new Set(
+    String(process.env.BG_PATTERN_BLACKLIST ?? '2,3,7,8,9')
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n))
+  );
   try {
     const files = await readdir(patternsDir);
-    // Sort NUMERICO por el indice del archivo (bg_pattern_2 antes que
-    // bg_pattern_10, no al reves como hacia el sort lexicografico).
     const pngs = files
       .filter((f) => f.endsWith('.png'))
+      .filter((f) => {
+        const m = f.match(/bg_pattern_(\d+)\.png$/);
+        if (!m) return true; // mantener archivos que no matcheen el patron
+        return !blacklist.has(parseInt(m[1], 10));
+      })
       .map((f) => path.join(patternsDir, f))
       .sort((a, b) => {
         const numA = parseInt(path.basename(a).match(/(\d+)/)?.[1] || '0', 10);
         const numB = parseInt(path.basename(b).match(/(\d+)/)?.[1] || '0', 10);
         return numA - numB;
       });
-    if (pngs.length > 0) return pngs;
+    if (pngs.length > 0) {
+      logger?.info?.({ count: pngs.length, blacklist: [...blacklist] }, 'bg patterns activos para rotacion');
+      return pngs;
+    }
   } catch (e) {
     /* directorio no existe */
   }

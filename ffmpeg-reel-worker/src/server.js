@@ -1271,12 +1271,22 @@ app.get('/patterns', async (req, res) => {
     '9 - Lineas topograficas suaves',
     '10 - Constelacion tenue',
   ];
-  const tiles = labels.map((label, idx) => `
-    <figure>
+  // Blacklist (debe coincidir con listBackgroundPatterns)
+  const blacklist = new Set(
+    String(process.env.BG_PATTERN_BLACKLIST ?? '2,3,7,8,9')
+      .split(',')
+      .map((s) => parseInt(s.trim(), 10))
+      .filter((n) => Number.isFinite(n))
+  );
+  const tiles = labels.map((label, idx) => {
+    const inactive = blacklist.has(idx);
+    return `
+    <figure style="${inactive ? 'opacity:0.35;filter:grayscale(0.7)' : ''}">
       <img src="/patterns/${idx}.png" alt="${label}" loading="lazy">
-      <figcaption>${label}</figcaption>
+      <figcaption>${label}${inactive ? ' <span style="color:#fca5a5">(inactivo)</span>' : ' <span style="color:#86efac">(activo)</span>'}</figcaption>
     </figure>
-  `).join('');
+  `;
+  }).join('');
   const html = `<!doctype html>
 <html lang="es"><head>
 <meta charset="utf-8">
